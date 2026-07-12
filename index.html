@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Archelon Learning</title>
+</head>
+<body>
+  <div id="app" class="learning-app">
+    <header class="learning-topbar">
+      <div class="topbar-left">
+        <div class="brand-lockup">
+          <img class="brand-logo" src="/Archelon_logo.png" alt="Archelon" />
+          <span class="brand-name">Archelon</span>
+        </div>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <div class="learning-title-lockup">
+          <svg class="learning-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5V6.75A1.75 1.75 0 0 1 5.75 5h4.9c1.09 0 2.13.43 2.9 1.2l.45.45.45-.45A4.1 4.1 0 0 1 17.35 5h.9A1.75 1.75 0 0 1 20 6.75V19.5l-5.2-1.73a8.8 8.8 0 0 0-5.6 0L4 19.5Z" />
+          </svg>
+          <span>Archelon Learning</span>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="topbar-progress">
+          <span id="topbarCourseName" class="topbar-course-name">Claude + Codex Interview Questions</span>
+          <span id="overallProgressPercent">0%</span>
+          <div class="progress-track topbar-progress-track" aria-hidden="true">
+            <div id="overallProgressFill" class="progress-fill"></div>
+          </div>
+          <span id="overallProgressText" class="topbar-progress-text">0 / 0 completed</span>
+        </div>
+        <label class="search-shell">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" />
+            <path stroke-linecap="round" d="m16 16 4 4" />
+          </svg>
+          <input id="lessonSearchInput" type="search" placeholder="Search lessons..." />
+        </label>
+        <button id="toggleRightPanelButton" class="icon-shell" type="button" aria-label="Toggle notes panel" title="Toggle notes panel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6" />
+          </svg>
+        </button>
+        <button class="icon-shell" type="button" aria-label="Theme settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <circle cx="12" cy="12" r="3.5" />
+            <path stroke-linecap="round" d="M12 2.75v2.5M12 18.75v2.5M21.25 12h-2.5M5.25 12h-2.5M18.54 5.46l-1.77 1.77M7.23 16.77l-1.77 1.77M18.54 18.54l-1.77-1.77M7.23 7.23 5.46 5.46" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="learning-layout">
+      <aside id="learningSidebar" class="learning-sidebar">
+        <div class="sidebar-section">
+          <p class="sidebar-label">Learning</p>
+          <div class="learning-nav">
+            <button id="navMyLearning" class="learning-nav-item is-active" type="button">
+              <span class="learning-nav-main">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5V6.75A1.75 1.75 0 0 1 5.75 5h4.9c1.09 0 2.13.43 2.9 1.2l.45.45.45-.45A4.1 4.1 0 0 1 17.35 5h.9A1.75 1.75 0 0 1 20 6.75V19.5l-5.2-1.73a8.8 8.8 0 0 0-5.6 0L4 19.5Z" />
+                </svg>
+                <span>My Learning</span>
+              </span>
+              <svg id="myLearningChevron" class="module-chevron is-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m7 10 5 5 5-5" />
+              </svg>
+            </button>
+            <div id="myLearningContent" class="my-learning-content">
+              <button id="courseNavItem" class="course-nav-item is-active" type="button">
+                <span id="courseNameLabel">Claude + Codex Interview Questions</span>
+                <span id="courseMetaLabel">0 lessons</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="sidebar-section sidebar-modules-section">
+          <div class="sidebar-section-head">
+            <div class="sidebar-section-head-left">
+              <p class="sidebar-label sidebar-label-inline">Modules</p>
+              <span id="moduleMetaLabel" class="sidebar-meta">0 lessons</span>
+            </div>
+            <button id="toggleLeftPanelButton" class="icon-shell sidebar-collapse-button" type="button" aria-label="Collapse lesson list" title="Collapse lesson list">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 6l-6 6 6 6" />
+              </svg>
+            </button>
+          </div>
+          <div id="moduleAccordionList" class="module-list"></div>
+        </div>
+      </aside>
+
+      <main class="lesson-column">
+        <div class="breadcrumb-row" id="breadcrumbRow"></div>
+
+        <article id="lessonCard" class="lesson-card hidden">
+          <div class="lesson-card-top">
+            <div class="lesson-copy">
+              <p class="lesson-label">Question</p>
+              <h1 id="lessonQuestion" class="lesson-question"></h1>
+              <div id="lessonTags" class="lesson-tags hidden"></div>
+            </div>
+            <div class="bookmark-control">
+              <button id="bookmarkLessonButton" class="bookmark-button" type="button" aria-label="Bookmark lesson" title="Bookmark lesson">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M7 4.75h10A1.25 1.25 0 0 1 18.25 6v14l-6.25-3.5L5.75 20V6A1.25 1.25 0 0 1 7 4.75z" />
+                </svg>
+              </button>
+              <div id="selectedBookmarkLabel" class="selected-bookmark-label"></div>
+              <div id="bookmarkLabelPicker" class="bookmark-label-picker hidden"></div>
+            </div>
+          </div>
+
+          <hr class="lesson-divider" />
+
+          <div class="answer-section">
+            <p class="lesson-label">Answer</p>
+            <div id="lessonAnswer" class="lesson-answer"></div>
+          </div>
+
+          <hr class="lesson-divider" />
+
+          <div class="lesson-actions-row">
+            <button id="completeLessonButton" class="complete-button" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m5 12 4 4L19 6" />
+              </svg>
+              <span>Mark as Complete</span>
+            </button>
+
+            <div class="lesson-secondary-actions">
+              <div id="priorityCluster" class="priority-cluster"></div>
+              <div class="lesson-pagination">
+                <button id="previousLessonButton" class="secondary-button" type="button">Previous</button>
+                <button id="nextLessonButton" class="secondary-button" type="button">Next</button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <section id="lessonEmptyState" class="lesson-empty-state hidden">
+          <p class="lesson-label">Learning</p>
+          <h1>Select a lesson to begin.</h1>
+          <p>Choose any question from the module list on the left to open its answer, notes, and completion state.</p>
+        </section>
+      </main>
+
+      <aside id="sidePanel" class="side-panel">
+        <div class="side-panel-tabs">
+          <button id="notesTabButton" class="side-tab is-active" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M7 4.75h10A1.25 1.25 0 0 1 18.25 6v12A1.25 1.25 0 0 1 17 19.25H7A1.25 1.25 0 0 1 5.75 18V6A1.25 1.25 0 0 1 7 4.75zM9 8.5h6M9 12h6M9 15.5h4" />
+            </svg>
+            <span>Notes</span>
+          </button>
+          <button id="bookmarksTabButton" class="side-tab" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M7 4.75h10A1.25 1.25 0 0 1 18.25 6v14l-6.25-3.5L5.75 20V6A1.25 1.25 0 0 1 7 4.75z" />
+            </svg>
+            <span>Bookmarks</span>
+          </button>
+        </div>
+
+        <div id="notesPanel" class="side-panel-body">
+          <section class="notes-card">
+            <div class="notes-card-head">
+              <div class="notes-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M7 4.75h10A1.25 1.25 0 0 1 18.25 6v12A1.25 1.25 0 0 1 17 19.25H7A1.25 1.25 0 0 1 5.75 18V6A1.25 1.25 0 0 1 7 4.75zM9 8.5h6M9 12h6M9 15.5h4" />
+                </svg>
+                <span>My Notes</span>
+              </div>
+              <button id="newNoteButton" class="new-note-button" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                  <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+                </svg>
+                <span>New Note</span>
+              </button>
+            </div>
+
+            <div id="noteEditor" class="note-editor hidden">
+              <textarea id="noteTextarea" placeholder="Start taking notes for this lesson..."></textarea>
+              <div class="note-editor-actions">
+                <button id="cancelNoteButton" class="secondary-button" type="button">Cancel</button>
+                <button id="saveNoteButton" class="complete-button compact-complete-button" type="button">
+                  <span>Save Note</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="notesList" class="notes-list"></div>
+            <div id="notesEmptyState" class="notes-empty-state">
+              <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M22 12h15l13 13v27a4 4 0 0 1-4 4H22a8 8 0 0 1-8-8V20a8 8 0 0 1 8-8Z" opacity=".5" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M37 12v12a2 2 0 0 0 2 2h11" opacity=".5" />
+                <path stroke-linecap="round" d="M24 35h16M24 43h10" />
+              </svg>
+              <h3>No notes yet</h3>
+              <p>Start taking notes for this lesson.</p>
+            </div>
+          </section>
+        </div>
+
+        <div id="bookmarksPanel" class="side-panel-body hidden">
+          <section class="notes-card">
+            <div id="bookmarkLabelFilters" class="bookmark-label-filters"></div>
+            <div id="bookmarksList" class="bookmark-list"></div>
+            <div id="bookmarksEmptyState" class="notes-empty-state">
+              <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M20 12h24a4 4 0 0 1 4 4v36L32 43l-16 9V16a4 4 0 0 1 4-4Z" opacity=".55" />
+              </svg>
+              <h3>No bookmarks yet</h3>
+              <p>Bookmark important lessons to revisit them quickly.</p>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
