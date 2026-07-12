@@ -206,7 +206,7 @@ function renderSidebarNav() {
   elements.toggleLeftPanelButton.setAttribute('aria-label', state.leftPanelCollapsed ? 'Expand lesson list' : 'Collapse lesson list');
   elements.toggleLeftPanelButton.title = state.leftPanelCollapsed ? 'Expand lesson list' : 'Collapse lesson list';
   elements.toggleLeftPanelButton.innerHTML = state.leftPanelCollapsed
-    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6" /></svg>'
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" d="M5 7h14M5 12h14M5 17h14" /></svg>'
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 6l-6 6 6 6" /></svg>';
   elements.toggleRightPanelButton.setAttribute('aria-label', state.rightPanelCollapsed ? 'Expand notes panel' : 'Collapse notes panel');
   elements.toggleRightPanelButton.title = state.rightPanelCollapsed ? 'Expand notes panel' : 'Collapse notes panel';
@@ -805,6 +805,20 @@ function renderBookmarksPanel() {
           </button>
         `).join('')}
       </div>
+    </div>
+    <div class="bookmark-label-counts" aria-label="Bookmark label counts">
+      ${filterButtons.filter((label) => label.id !== 'all').map((label) => `
+        <button
+          class="bookmark-count-chip ${activeFilterId === label.id ? 'is-active' : ''}"
+          data-bookmark-filter-id="${escapeHtml(label.id)}"
+          type="button"
+          title="${escapeHtml(label.name)} bookmarks"
+        >
+          <span style="background: ${escapeHtml(label.color || '#00c9b1')}"></span>
+          <strong>${escapeHtml(label.name)}</strong>
+          <em>${label.count}</em>
+        </button>
+      `).join('')}
     </div>
   `;
 
