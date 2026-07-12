@@ -37,6 +37,8 @@ let selectedLabelColor = '#00c9b1';
 let bookmarkLabelDraftName = '';
 let bookmarkLabelError = '';
 let savingBookmarkLabel = false;
+let completionToastTimer = null;
+let progressGlowTimer = null;
 
 const labelColors = ['#00c9b1', '#22c55e', '#3b82f6', '#f59e0b', '#ef4444'];
 
@@ -56,6 +58,7 @@ const elements = {
   toggleRightPanelButton: document.getElementById('toggleRightPanelButton'),
   moduleMetaLabel: document.getElementById('moduleMetaLabel'),
   moduleAccordionList: document.getElementById('moduleAccordionList'),
+  topbarProgress: document.querySelector('.topbar-progress'),
   topbarCourseName: document.getElementById('topbarCourseName'),
   overallProgressPercent: document.getElementById('overallProgressPercent'),
   overallProgressFill: document.getElementById('overallProgressFill'),
@@ -69,7 +72,9 @@ const elements = {
   bookmarkLessonButton: document.getElementById('bookmarkLessonButton'),
   selectedBookmarkLabel: document.getElementById('selectedBookmarkLabel'),
   bookmarkLabelPicker: document.getElementById('bookmarkLabelPicker'),
+  lessonStatusMicrocopy: document.getElementById('lessonStatusMicrocopy'),
   completeLessonButton: document.getElementById('completeLessonButton'),
+  completionToast: document.getElementById('completionToast'),
   previousLessonButton: document.getElementById('previousLessonButton'),
   nextLessonButton: document.getElementById('nextLessonButton'),
   priorityCluster: document.getElementById('priorityCluster'),
@@ -117,6 +122,76 @@ function renderTopMeta() {
   elements.overallProgressPercent.textContent = `${progressPercent}%`;
   elements.overallProgressFill.style.width = `${progressPercent}%`;
   elements.overallProgressText.textContent = `${completedCount} / ${totalLessons} lessons completed`;
+}
+
+function glowTopProgress() {
+  window.clearTimeout(progressGlowTimer);
+  elements.overallProgressPercent.classList.add('is-glowing');
+  elements.overallProgressText.classList.add('is-glowing');
+  elements.overallProgressFill.classList.add('is-glowing');
+  progressGlowTimer = window.setTimeout(() => {
+    elements.overallProgressPercent.classList.remove('is-glowing');
+    elements.overallProgressText.classList.remove('is-glowing');
+    elements.overallProgressFill.classList.remove('is-glowing');
+  }, 1200);
+}
+
+function sprinkleProgress() {
+  const burst = document.createElement('span');
+  burst.className = 'progress-sprinkle-burst';
+  const particles = [
+    ['-28px', '-18px', '#22c55e', '-18deg'],
+    ['-14px', '-26px', '#00c9b1', '16deg'],
+    ['2px', '-22px', '#f59e0b', '34deg'],
+    ['18px', '-18px', '#3b82f6', '-28deg'],
+    ['32px', '-10px', '#ef4444', '24deg'],
+    ['-22px', '10px', '#facc15', '10deg'],
+    ['10px', '12px', '#22c55e', '-36deg'],
+    ['28px', '8px', '#00c9b1', '42deg'],
+  ];
+  burst.innerHTML = particles.map(([x, y, color, rotate]) => `
+    <i style="--x: ${x}; --y: ${y}; --sprinkle-color: ${color}; --rotate: ${rotate};"></i>
+  `).join('');
+  elements.topbarProgress.append(burst);
+  window.setTimeout(() => burst.remove(), 900);
+}
+
+function showCompletionToast(completedCount) {
+  window.clearTimeout(completionToastTimer);
+  const milestonePhrases = [
+    'Milestone hit.',
+    'Momentum unlocked.',
+    'You are stacking wins.',
+    'Five more locked in.',
+    'Progress looks good.',
+  ];
+  const isMilestone = completedCount > 0 && completedCount % 5 === 0;
+  const milestoneIndex = Math.floor(completedCount / 5 - 1) % milestonePhrases.length;
+  const title = isMilestone ? milestonePhrases[milestoneIndex] : 'Nice.';
+  const detail = isMilestone
+    ? `${completedCount} lessons completed. Keep the streak alive.`
+    : `${completedCount} lessons completed.`;
+  const icon = isMilestone ? '&#127881;' : '&#128293;';
+  elements.completionToast.innerHTML = `
+    <span class="completion-toast-icon" aria-hidden="true">🔥</span>
+    <strong>${title}</strong>
+    <span>${detail}</span>
+  `;
+  elements.completionToast.querySelector('.completion-toast-icon').innerHTML = icon;
+  elements.completionToast.classList.toggle('is-milestone', isMilestone);
+  elements.completionToast.classList.remove('hidden');
+  elements.completionToast.classList.remove('is-leaving');
+  elements.completionToast.classList.remove('is-visible');
+  void elements.completionToast.offsetWidth;
+  elements.completionToast.classList.add('is-visible');
+  completionToastTimer = window.setTimeout(() => {
+    elements.completionToast.classList.add('is-leaving');
+    elements.completionToast.classList.remove('is-visible');
+    completionToastTimer = window.setTimeout(() => {
+      elements.completionToast.classList.add('hidden');
+      elements.completionToast.classList.remove('is-leaving');
+    }, 220);
+  }, 2600);
 }
 
 function renderSidebarNav() {
@@ -564,6 +639,10 @@ function renderLessonCard() {
   `;
   elements.completeLessonButton.classList.toggle('is-complete', lessonState.completed);
   elements.completeLessonButton.classList.toggle('is-completing', completingLessonId === lesson.id);
+  elements.lessonStatusMicrocopy.textContent = lessonState.completed
+    ? 'Locked in.'
+    : 'Finish this one to keep momentum.';
+  elements.lessonStatusMicrocopy.classList.toggle('is-complete', lessonState.completed);
   elements.completeLessonButton.onclick = () => {
     if (completingLessonId) return;
     const nextCompleted = !lessonState.completed;
@@ -587,6 +666,9 @@ function renderLessonCard() {
       completingLessonId = null;
       persist();
       renderTopMeta();
+      glowTopProgress();
+      sprinkleProgress();
+      showCompletionToast(getCompletedCount(course, state));
       renderModuleList();
       renderLessonCard();
       patchLesson(lesson.id, { mark_as_complete: true }).catch((error) => {

@@ -124,12 +124,15 @@
           <hr class="lesson-divider" />
 
           <div class="lesson-actions-row">
-            <button id="completeLessonButton" class="complete-button" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m5 12 4 4L19 6" />
-              </svg>
-              <span>Mark as Complete</span>
-            </button>
+            <div class="completion-cluster">
+              <p id="lessonStatusMicrocopy" class="lesson-status-microcopy">Finish this one to keep momentum.</p>
+              <button id="completeLessonButton" class="complete-button" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="m5 12 4 4L19 6" />
+                </svg>
+                <span>Mark as Complete</span>
+              </button>
+            </div>
 
             <div class="lesson-secondary-actions">
               <div id="priorityCluster" class="priority-cluster"></div>
@@ -147,6 +150,8 @@
           <p>Choose any question from the module list on the left to open its answer, notes, and completion state.</p>
         </section>
       </main>
+
+      <div id="completionToast" class="completion-toast hidden" role="status" aria-live="polite"></div>
 
       <aside id="sidePanel" class="side-panel">
         <div class="side-panel-tabs">
