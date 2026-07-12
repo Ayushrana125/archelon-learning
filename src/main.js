@@ -37,7 +37,6 @@ let selectedLabelColor = '#00c9b1';
 let bookmarkLabelDraftName = '';
 let bookmarkLabelError = '';
 let savingBookmarkLabel = false;
-let completionToastTimer = null;
 let progressGlowTimer = null;
 
 const labelColors = ['#00c9b1', '#22c55e', '#3b82f6', '#f59e0b', '#ef4444'];
@@ -74,7 +73,6 @@ const elements = {
   bookmarkLabelPicker: document.getElementById('bookmarkLabelPicker'),
   lessonStatusMicrocopy: document.getElementById('lessonStatusMicrocopy'),
   completeLessonButton: document.getElementById('completeLessonButton'),
-  completionToast: document.getElementById('completionToast'),
   previousLessonButton: document.getElementById('previousLessonButton'),
   nextLessonButton: document.getElementById('nextLessonButton'),
   priorityCluster: document.getElementById('priorityCluster'),
@@ -668,7 +666,6 @@ function renderLessonCard() {
       renderTopMeta();
       glowTopProgress();
       sprinkleProgress();
-      showCompletionToast(getCompletedCount(course, state));
       renderModuleList();
       renderLessonCard();
       patchLesson(lesson.id, { mark_as_complete: true }).catch((error) => {
