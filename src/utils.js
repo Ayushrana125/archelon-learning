@@ -10,6 +10,7 @@ export function saveLearningState(state) {
   localStorage.setItem('archelon-learning-state-v2', JSON.stringify({
     expandedModuleIds: state.expandedModuleIds,
     selectedLessonId: state.selectedLessonId,
+    selectedCourseName: state.selectedCourseName,
     activeSideTab: state.activeSideTab,
     sidebarMode: state.sidebarMode,
     myLearningExpanded: state.myLearningExpanded,
@@ -23,17 +24,8 @@ function slugify(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-const moduleDefinitions = [
-  { id: 'basic', title: 'Module 1: Basic', module: 'Basic' },
-  { id: 'medium', title: 'Module 2: Medium', module: 'Medium' },
-  { id: 'advanced', title: 'Module 3: Advanced', module: 'Advanced' },
-];
-
 function normalizeModule(value) {
-  const moduleName = String(value || '').trim().toLowerCase();
-  if (moduleName.includes('advanced')) return 'Advanced';
-  if (moduleName.includes('medium')) return 'Medium';
-  return 'Basic';
+  return String(value || '').trim() || 'General';
 }
 
 function normalizeNotes(notes, lessonId) {
@@ -75,24 +67,26 @@ export function buildLearningCourse(rawQuestions) {
   }))
     .sort((left, right) => left.number - right.number);
 
-  const modules = moduleDefinitions.map((definition) => {
-    const lessonsForModule = questions.filter((question) => question.module === definition.module);
+  const moduleNames = [...new Set(questions.map((question) => question.module))];
+  const modules = moduleNames.map((moduleName, index) => {
+    const moduleId = `module-${index + 1}-${slugify(moduleName) || 'general'}`;
+    const lessonsForModule = questions.filter((question) => question.module === moduleName);
     const displayNumberById = new Map(lessonsForModule.map((question, index) => [question.id, index + 1]));
     const categoryTitles = [...new Set(lessonsForModule.map((question) => question.category))];
     return {
-      id: definition.id,
-      title: definition.title,
-      subtitle: definition.module,
-      module: definition.module,
+      id: moduleId,
+      title: `Module ${index + 1}: ${moduleName}`,
+      subtitle: moduleName,
+      module: moduleName,
       categories: categoryTitles.map((categoryTitle) => ({
-        id: `${definition.id}-${slugify(categoryTitle)}`,
+        id: `${moduleId}-${slugify(categoryTitle) || 'category'}`,
         title: categoryTitle,
         lessons: lessonsForModule
           .filter((question) => question.category === categoryTitle)
           .map((question) => ({
             ...question,
             displayNumber: displayNumberById.get(question.id),
-            moduleId: definition.id,
+            moduleId,
           })),
       })),
     };
@@ -115,6 +109,10 @@ export function getLessonById(course, lessonId) {
 
 export function buildState(rawState, course) {
   const lessons = flattenLessons(course);
+  const courseModuleIds = course.modules.map((module) => module.id);
+  const savedExpandedModuleIds = Array.isArray(rawState.expandedModuleIds)
+    ? rawState.expandedModuleIds.filter((id) => courseModuleIds.includes(id))
+    : [];
   const lessonState = {};
   lessons.forEach((lesson) => {
     lessonState[lesson.id] = {
@@ -131,10 +129,9 @@ export function buildState(rawState, course) {
   return {
     lessonState,
     notes: lessons.flatMap((lesson) => lesson.notes || []),
-    expandedModuleIds: Array.isArray(rawState.expandedModuleIds) && rawState.expandedModuleIds.length
-      ? rawState.expandedModuleIds
-      : course.modules.map((module) => module.id),
+    expandedModuleIds: savedExpandedModuleIds.length ? savedExpandedModuleIds : courseModuleIds,
     selectedLessonId: selectedLessonExists ? rawState.selectedLessonId : lessons[0]?.id || null,
+    selectedCourseName: rawState.selectedCourseName || course.title,
     activeSideTab: rawState.activeSideTab || 'notes',
     sidebarMode: rawState.sidebarMode || 'my-learning',
     myLearningExpanded: rawState.myLearningExpanded !== false,

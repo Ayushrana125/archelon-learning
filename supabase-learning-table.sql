@@ -2,6 +2,7 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.interview_qa (
   id uuid primary key default gen_random_uuid(),
+  course_name text not null default 'Claude + Codex Interview Questions',
   order_index integer not null,
   question text not null,
   answer text not null,
@@ -13,9 +14,21 @@ create table if not exists public.interview_qa (
   notes jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint interview_qa_question_unique unique (question),
+  constraint interview_qa_course_question_unique unique (course_name, question),
   constraint interview_qa_notes_is_array check (jsonb_typeof(notes) = 'array')
 );
+
+alter table public.interview_qa
+add column if not exists course_name text not null default 'Claude + Codex Interview Questions';
+
+alter table public.interview_qa
+drop constraint if exists interview_qa_question_unique;
+
+alter table public.interview_qa
+drop constraint if exists interview_qa_course_question_unique;
+
+alter table public.interview_qa
+add constraint interview_qa_course_question_unique unique (course_name, question);
 
 create table if not exists public.learning_bookmark_labels (
   id uuid primary key default gen_random_uuid(),
@@ -68,6 +81,7 @@ drop column if exists bookmark_label_id;
 
 create index if not exists interview_qa_module_idx on public.interview_qa (module);
 create index if not exists interview_qa_category_idx on public.interview_qa (category);
+create index if not exists interview_qa_course_name_idx on public.interview_qa (course_name);
 create index if not exists interview_qa_order_index_idx on public.interview_qa (order_index);
 create index if not exists interview_qa_tags_gin_idx on public.interview_qa using gin (tags);
 create index if not exists interview_qa_notes_gin_idx on public.interview_qa using gin (notes);

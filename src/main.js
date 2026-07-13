@@ -18,7 +18,10 @@ import {
 import {
   addBookmarkLabelAssignment,
   createBookmarkLabel,
+  createInterviewQuestions,
   deleteBookmarkLabel,
+  deleteInterviewQuestion,
+  deleteInterviewQuestionsByCourse,
   fetchBookmarkLabelByName,
   fetchBookmarkLabelAssignments,
   fetchBookmarkLabels,
@@ -26,10 +29,14 @@ import {
   removeBookmarkLabelAssignmentsByLabel,
   removeBookmarkLabelAssignment,
   updateInterviewQuestion,
+  updateInterviewQuestionsByCourse,
 } from './supabaseApi.js';
 
 let course = { id: 'archelon-interview-course', title: 'Archelon Learning', modules: [] };
 let state = buildState(loadLearningState(), course);
+let allQuestionRows = [];
+let allBookmarkAssignments = [];
+let courseSummaries = [];
 let completingLessonId = null;
 let bookmarkLabels = [];
 let bookmarkPickerOpen = false;
@@ -45,9 +52,30 @@ let answerDraft = '';
 let savingAnswer = false;
 let answerCopiedTimer = null;
 let answerConfirmResolver = null;
-let editingQuestionId = null;
-let questionDraft = '';
-let savingQuestion = false;
+let editingLessonId = null;
+let lessonEditDraft = null;
+let savingLessonEdit = false;
+let lessonImportOpen = false;
+let lessonImportMode = 'single';
+let lessonImportError = '';
+let savingLessonImport = false;
+let lessonImportDraft = {
+  courseName: '',
+  question: '',
+  answer: '',
+  module: 'Basic',
+  category: '',
+  tags: '',
+  json: '',
+};
+let lessonImportProgress = {
+  total: 0,
+  completed: 0,
+};
+let lessonImportStatus = '';
+let editingCourseName = null;
+let courseNameDraft = '';
+let savingCourseName = false;
 
 const labelColors = [
   '#00c9b1',
@@ -61,15 +89,24 @@ const labelColors = [
   '#64748b',
 ];
 
+const bulkLessonJsonSample = JSON.stringify([
+  {
+    question: '',
+    type: 'Basic',
+    category: '',
+    tags: [],
+    answer: '',
+  },
+], null, 2);
+
 const elements = {
   app: document.getElementById('app'),
   lessonSearchInput: document.getElementById('lessonSearchInput'),
   navMyLearning: document.getElementById('navMyLearning'),
   myLearningChevron: document.getElementById('myLearningChevron'),
   myLearningContent: document.getElementById('myLearningContent'),
-  courseNavItem: document.getElementById('courseNavItem'),
-  courseNameLabel: document.getElementById('courseNameLabel'),
-  courseMetaLabel: document.getElementById('courseMetaLabel'),
+  courseList: document.getElementById('courseList'),
+  addLessonsButton: document.getElementById('addLessonsButton'),
   learningSidebar: document.getElementById('learningSidebar'),
   lessonColumn: document.querySelector('.lesson-column'),
   sidePanel: document.getElementById('sidePanel'),
@@ -87,6 +124,7 @@ const elements = {
   lessonEmptyState: document.getElementById('lessonEmptyState'),
   lessonQuestion: document.getElementById('lessonQuestion'),
   editQuestionButton: document.getElementById('editQuestionButton'),
+  deleteLessonButton: document.getElementById('deleteLessonButton'),
   lessonTags: document.getElementById('lessonTags'),
   lessonAnswer: document.getElementById('lessonAnswer'),
   copyAnswerButton: document.getElementById('copyAnswerButton'),
@@ -118,10 +156,370 @@ const elements = {
   answerConfirmText: document.getElementById('answerConfirmText'),
   cancelAnswerConfirmButton: document.getElementById('cancelAnswerConfirmButton'),
   confirmAnswerUpdateButton: document.getElementById('confirmAnswerUpdateButton'),
+  lessonImportOverlay: document.getElementById('lessonImportOverlay'),
+  closeLessonImportButton: document.getElementById('closeLessonImportButton'),
+  singleLessonModeButton: document.getElementById('singleLessonModeButton'),
+  bulkLessonModeButton: document.getElementById('bulkLessonModeButton'),
+  lessonImportForm: document.getElementById('lessonImportForm'),
 };
 
 function persist() {
   saveLearningState(state);
+}
+
+function getRowCourseName(row) {
+  return row.course_name || 'Claude + Codex Interview Questions';
+}
+
+function getCourseSummaries(rows) {
+  const summaries = new Map();
+  rows.forEach((row) => {
+    const courseName = getRowCourseName(row);
+    const current = summaries.get(courseName) || { name: courseName, totalLessons: 0 };
+    summaries.set(courseName, {
+      ...current,
+      totalLessons: current.totalLessons + 1,
+    });
+  });
+  return [...summaries.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function resetMarkdownEditors() {
+  editingAnswerId = null;
+  answerDraft = '';
+  savingAnswer = false;
+  editingLessonId = null;
+  lessonEditDraft = null;
+  savingLessonEdit = false;
+}
+
+function buildCourseRows(courseName) {
+  return allQuestionRows.filter((row) => getRowCourseName(row) === courseName);
+}
+
+function setActiveCourse(courseName, options = {}) {
+  const nextCourseName = courseSummaries.some((summary) => summary.name === courseName)
+    ? courseName
+    : courseSummaries[0]?.name;
+  const courseRows = buildCourseRows(nextCourseName);
+  course = buildLearningCourse(applyBookmarkAssignments(courseRows, allBookmarkAssignments));
+  state = buildState({
+    ...loadLearningState(),
+    selectedCourseName: nextCourseName,
+    selectedLessonId: options.keepSelectedLesson ? state.selectedLessonId : null,
+  }, course);
+  state.selectedCourseName = nextCourseName || course.title;
+  state.searchQuery = options.keepSearch ? state.searchQuery : '';
+  bookmarkPickerOpen = false;
+  bookmarkFilterOpen = false;
+  addingBookmarkLabel = false;
+  resetMarkdownEditors();
+  persist();
+}
+
+function rebuildAfterDataChange(preferredCourseName) {
+  courseSummaries = getCourseSummaries(allQuestionRows);
+  const nextCourseName = courseSummaries.some((summary) => summary.name === preferredCourseName)
+    ? preferredCourseName
+    : courseSummaries[0]?.name;
+  setActiveCourse(nextCourseName, { keepSearch: true });
+}
+
+async function deleteCurrentLesson(lesson) {
+  const confirmed = await confirmMarkdownUpdate({
+    title: 'Delete lesson',
+    text: `Delete "${lesson.title}" from this course?`,
+    actionLabel: 'Delete Lesson',
+  });
+  if (!confirmed) return;
+
+  try {
+    await deleteInterviewQuestion(lesson.id);
+    allQuestionRows = allQuestionRows.filter((row) => row.id !== lesson.id);
+    allBookmarkAssignments = allBookmarkAssignments.filter((assignment) => assignment.question_id !== lesson.id);
+    rebuildAfterDataChange(state.selectedCourseName);
+    render();
+  } catch (error) {
+    console.error(error);
+    alert('Could not delete lesson.');
+  }
+}
+
+async function deleteCourseByName(courseName) {
+  const summary = courseSummaries.find((item) => item.name === courseName);
+  if (!summary) return;
+  const confirmed = await confirmMarkdownUpdate({
+    title: 'Delete course',
+    text: `Delete "${summary.name}" and all ${summary.totalLessons} lesson${summary.totalLessons === 1 ? '' : 's'} in it?`,
+    actionLabel: 'Delete Course',
+  });
+  if (!confirmed) return;
+
+  try {
+    const courseLessonIds = new Set(allQuestionRows
+      .filter((row) => getRowCourseName(row) === courseName)
+      .map((row) => row.id));
+    await deleteInterviewQuestionsByCourse(courseName);
+    allQuestionRows = allQuestionRows.filter((row) => getRowCourseName(row) !== courseName);
+    allBookmarkAssignments = allBookmarkAssignments.filter((assignment) => !courseLessonIds.has(assignment.question_id));
+    rebuildAfterDataChange(courseName === state.selectedCourseName ? null : state.selectedCourseName);
+    render();
+  } catch (error) {
+    console.error(error);
+    alert('Could not delete course.');
+  }
+}
+
+function startCourseRename(courseName) {
+  editingCourseName = courseName;
+  courseNameDraft = courseName;
+  renderCourseList();
+  elements.courseList.querySelector('#courseRenameInput')?.focus();
+}
+
+function cancelCourseRename() {
+  editingCourseName = null;
+  courseNameDraft = '';
+  savingCourseName = false;
+  renderCourseList();
+}
+
+async function saveCourseRename() {
+  const oldName = editingCourseName;
+  const nextName = courseNameDraft.trim();
+  if (!oldName) return;
+  if (!nextName) {
+    alert('Course name cannot be empty.');
+    return;
+  }
+  if (nextName === oldName) {
+    cancelCourseRename();
+    return;
+  }
+  if (courseSummaries.some((summary) => summary.name === nextName)) {
+    alert('A course with this name already exists.');
+    return;
+  }
+
+  const confirmed = await confirmMarkdownUpdate({
+    title: 'Rename course',
+    text: `Rename "${oldName}" to "${nextName}" for all lessons in this course?`,
+    actionLabel: 'Rename Course',
+  });
+  if (!confirmed) return;
+
+  savingCourseName = true;
+  renderCourseList();
+  try {
+    await updateInterviewQuestionsByCourse(oldName, { course_name: nextName });
+    allQuestionRows = allQuestionRows.map((row) => (
+      getRowCourseName(row) === oldName ? { ...row, course_name: nextName } : row
+    ));
+    editingCourseName = null;
+    courseNameDraft = '';
+    savingCourseName = false;
+    rebuildAfterDataChange(nextName);
+    render();
+  } catch (error) {
+    console.error(error);
+    savingCourseName = false;
+    alert('Could not rename course.');
+    renderCourseList();
+  }
+}
+
+function getNextOrderIndex(courseName) {
+  const courseRows = buildCourseRows(courseName);
+  if (!courseRows.length) return 1;
+  return Math.max(...courseRows.map((row) => Number(row.order_index) || 0)) + 1;
+}
+
+function openLessonImportDialog() {
+  lessonImportOpen = true;
+  lessonImportMode = 'single';
+  lessonImportError = '';
+  lessonImportStatus = '';
+  lessonImportProgress = { total: 0, completed: 0 };
+  lessonImportDraft = {
+    courseName: state.selectedCourseName || course.title || '',
+    question: '',
+    answer: '',
+    module: 'Basic',
+    category: '',
+    tags: '',
+    json: bulkLessonJsonSample,
+  };
+  renderLessonImportDialog();
+  elements.lessonImportForm.querySelector('[name="courseName"]')?.focus();
+}
+
+function closeLessonImportDialog() {
+  if (savingLessonImport) return;
+  lessonImportOpen = false;
+  lessonImportError = '';
+  lessonImportStatus = '';
+  renderLessonImportDialog();
+}
+
+function setLessonImportMode(mode) {
+  lessonImportMode = mode;
+  lessonImportError = '';
+  lessonImportStatus = '';
+  lessonImportProgress = { total: 0, completed: 0 };
+  if (mode === 'bulk' && !lessonImportDraft.json.trim()) {
+    lessonImportDraft.json = bulkLessonJsonSample;
+  }
+  renderLessonImportDialog();
+}
+
+function updateLessonImportDraft() {
+  elements.lessonImportForm.querySelectorAll('[data-import-field]').forEach((field) => {
+    lessonImportDraft[field.name] = field.value;
+  });
+}
+
+function parseTags(value) {
+  return value.split(',').map((tag) => tag.trim()).filter(Boolean);
+}
+
+function buildLessonEditDraft(lesson) {
+  return {
+    courseName: lesson.courseName || state.selectedCourseName || course.title || '',
+    question: lesson.question || '',
+    answer: lesson.answer || '',
+    module: lesson.module || 'Basic',
+    category: lesson.category || '',
+    tags: Array.isArray(lesson.tags) ? lesson.tags.join(', ') : '',
+  };
+}
+
+function updateLessonEditDraft() {
+  elements.lessonQuestion.querySelectorAll('[data-lesson-edit-field]').forEach((field) => {
+    lessonEditDraft[field.name] = field.value;
+  });
+}
+
+function normalizeSingleLessonRow() {
+  const courseName = lessonImportDraft.courseName.trim();
+  const question = lessonImportDraft.question.trim();
+  const answer = lessonImportDraft.answer.trim();
+  const moduleName = lessonImportDraft.module.trim();
+  const category = lessonImportDraft.category.trim();
+  if (!courseName) throw new Error('Course name is required.');
+  if (!moduleName) throw new Error('Module is required.');
+  if (!question) throw new Error('Question markdown is required.');
+  if (!answer) throw new Error('Answer markdown is required.');
+  if (!category) throw new Error('Category is required.');
+  return {
+    course_name: courseName,
+    order_index: getNextOrderIndex(courseName),
+    question,
+    answer,
+    module: moduleName,
+    category,
+    tags: parseTags(lessonImportDraft.tags),
+    mark_as_complete: false,
+    bookmark: false,
+    notes: [],
+  };
+}
+
+function assertStrictBulkLesson(item, index) {
+  const requiredKeys = ['question', 'type', 'category', 'tags', 'answer'];
+  if (!item || typeof item !== 'object' || Array.isArray(item)) {
+    throw new Error(`Item ${index + 1} must be an object.`);
+  }
+  const keys = Object.keys(item).sort();
+  const expected = [...requiredKeys].sort();
+  if (keys.length !== expected.length || keys.some((key, keyIndex) => key !== expected[keyIndex])) {
+    throw new Error(`Item ${index + 1} must contain exactly: question, type, category, tags, answer.`);
+  }
+  ['question', 'type', 'category', 'answer'].forEach((key) => {
+    if (typeof item[key] !== 'string' || !item[key].trim()) {
+      throw new Error(`Item ${index + 1}.${key} must be a non-empty string.`);
+    }
+  });
+  if (!Array.isArray(item.tags) || item.tags.some((tag) => typeof tag !== 'string')) {
+    throw new Error(`Item ${index + 1}.tags must be an array of strings.`);
+  }
+}
+
+function normalizeBulkLessonRows() {
+  const courseName = lessonImportDraft.courseName.trim();
+  if (!courseName) throw new Error('Course name is required.');
+  let parsed;
+  try {
+    parsed = JSON.parse(lessonImportDraft.json);
+  } catch {
+    throw new Error('Bulk JSON is not valid JSON.');
+  }
+  if (!Array.isArray(parsed) || !parsed.length) {
+    throw new Error('Bulk JSON must be a non-empty array.');
+  }
+  const startOrder = getNextOrderIndex(courseName);
+  return parsed.map((item, index) => {
+    assertStrictBulkLesson(item, index);
+    return {
+      course_name: courseName,
+      order_index: startOrder + index,
+      question: item.question.trim(),
+      answer: item.answer.trim(),
+      module: item.type.trim(),
+      category: item.category.trim(),
+      tags: item.tags.map((tag) => tag.trim()).filter(Boolean),
+      mark_as_complete: false,
+      bookmark: false,
+      notes: [],
+    };
+  });
+}
+
+async function importLessonRows(rows) {
+  const courseName = rows[0]?.course_name;
+  lessonImportProgress = { total: rows.length, completed: 0 };
+  lessonImportStatus = `Uploading 0 / ${rows.length}`;
+  renderLessonImportDialog();
+
+  const insertedRows = [];
+  const batchSize = 10;
+  for (let start = 0; start < rows.length; start += batchSize) {
+    const batch = rows.slice(start, start + batchSize);
+    const inserted = await createInterviewQuestions(batch);
+    insertedRows.push(...inserted);
+    lessonImportProgress = {
+      total: rows.length,
+      completed: Math.min(start + batch.length, rows.length),
+    };
+    lessonImportStatus = `Uploading ${lessonImportProgress.completed} / ${rows.length}`;
+    renderLessonImportDialog();
+  }
+
+  allQuestionRows = [...allQuestionRows, ...insertedRows];
+  courseSummaries = getCourseSummaries(allQuestionRows);
+  setActiveCourse(courseName, { keepSearch: true });
+  lessonImportOpen = false;
+  lessonImportStatus = `Imported ${rows.length} lesson${rows.length === 1 ? '' : 's'}.`;
+  lessonImportError = '';
+  savingLessonImport = false;
+  render();
+}
+
+async function saveLessonImport() {
+  updateLessonImportDraft();
+  lessonImportError = '';
+  lessonImportStatus = '';
+  try {
+    const rows = lessonImportMode === 'single'
+      ? [normalizeSingleLessonRow()]
+      : normalizeBulkLessonRows();
+    savingLessonImport = true;
+    await importLessonRows(rows);
+  } catch (error) {
+    console.error(error);
+    savingLessonImport = false;
+    lessonImportError = error.message;
+    renderLessonImportDialog();
+  }
 }
 
 async function patchLesson(lessonId, patch) {
@@ -129,16 +527,22 @@ async function patchLesson(lessonId, patch) {
   return updated;
 }
 
+function mergeUpdatedLessonRow(lessonId, patch, updated) {
+  allQuestionRows = allQuestionRows.map((row) => {
+    if (row.id !== lessonId) return row;
+    return {
+      ...row,
+      ...patch,
+      ...(updated || {}),
+    };
+  });
+}
+
 function setSelectedLesson(lessonId) {
   state.selectedLessonId = lessonId;
   bookmarkPickerOpen = false;
   addingBookmarkLabel = false;
-  editingAnswerId = null;
-  answerDraft = '';
-  savingAnswer = false;
-  editingQuestionId = null;
-  questionDraft = '';
-  savingQuestion = false;
+  resetMarkdownEditors();
   persist();
   render();
 }
@@ -149,8 +553,6 @@ function renderTopMeta() {
   const progressPercent = getProgressPercent(course, state);
   elements.moduleMetaLabel.textContent = `${totalLessons} lessons`;
   elements.topbarCourseName.textContent = course.title;
-  elements.courseNameLabel.textContent = course.title;
-  elements.courseMetaLabel.textContent = `${totalLessons} lessons`;
   elements.overallProgressPercent.textContent = `${progressPercent}%`;
   elements.overallProgressFill.style.width = `${progressPercent}%`;
   elements.overallProgressText.textContent = `${completedCount} / ${totalLessons} lessons completed`;
@@ -295,47 +697,87 @@ function confirmMarkdownUpdate({ title, text, actionLabel = 'Confirm Changes' })
   });
 }
 
-function cancelQuestionEdit() {
-  editingQuestionId = null;
-  questionDraft = '';
-  savingQuestion = false;
+function cancelLessonEdit() {
+  editingLessonId = null;
+  lessonEditDraft = null;
+  savingLessonEdit = false;
   renderLessonCard();
 }
 
-async function saveQuestionEdit(lesson) {
-  const textarea = elements.lessonQuestion.querySelector('#questionEditorTextarea');
-  const nextQuestion = textarea?.value ?? questionDraft;
-  questionDraft = nextQuestion;
+async function saveLessonEdit(lesson) {
+  updateLessonEditDraft();
+  const nextCourseName = lessonEditDraft.courseName.trim();
+  const nextQuestion = lessonEditDraft.question.trim();
+  const nextAnswer = lessonEditDraft.answer.trim();
+  const nextCategory = lessonEditDraft.category.trim();
+  const nextModule = lessonEditDraft.module.trim();
+  const nextTags = parseTags(lessonEditDraft.tags);
 
-  if (!nextQuestion.trim()) {
-    alert('Question cannot be empty.');
+  if (!nextCourseName) {
+    alert('Course name is required.');
+    return;
+  }
+  if (!nextModule) {
+    alert('Module is required.');
+    return;
+  }
+  if (!nextQuestion) {
+    alert('Question markdown is required.');
+    return;
+  }
+  if (!nextAnswer) {
+    alert('Answer markdown is required.');
+    return;
+  }
+  if (!nextCategory) {
+    alert('Category is required.');
     return;
   }
 
-  if (nextQuestion === lesson.question) {
-    cancelQuestionEdit();
+  const courseChanged = nextCourseName !== (lesson.courseName || state.selectedCourseName || course.title);
+  const patch = {
+    course_name: nextCourseName,
+    question: nextQuestion,
+    answer: nextAnswer,
+    module: nextModule,
+    category: nextCategory,
+    tags: nextTags,
+    ...(courseChanged ? { order_index: getNextOrderIndex(nextCourseName) } : {}),
+  };
+  const unchanged = !courseChanged
+    && nextQuestion === (lesson.question || '')
+    && nextAnswer === (lesson.answer || '')
+    && nextModule === (lesson.module || 'Basic')
+    && nextCategory === (lesson.category || '')
+    && nextTags.join('\u0000') === (Array.isArray(lesson.tags) ? lesson.tags : []).join('\u0000');
+
+  if (unchanged) {
+    cancelLessonEdit();
     return;
   }
 
   const confirmed = await confirmMarkdownUpdate({
-    title: 'Confirm question update',
-    text: 'Save these markdown changes to this question?',
+    title: 'Update lesson',
+    text: 'Save these changes to this lesson?',
+    actionLabel: 'Update Lesson',
   });
   if (!confirmed) return;
 
-  savingQuestion = true;
+  savingLessonEdit = true;
   renderLessonCard();
   try {
-    await patchLesson(lesson.id, { question: nextQuestion });
-    lesson.question = nextQuestion;
-    editingQuestionId = null;
-    questionDraft = '';
-    savingQuestion = false;
+    const updated = await patchLesson(lesson.id, patch);
+    mergeUpdatedLessonRow(lesson.id, patch, updated);
+    editingLessonId = null;
+    lessonEditDraft = null;
+    savingLessonEdit = false;
+    courseSummaries = getCourseSummaries(allQuestionRows);
+    setActiveCourse(nextCourseName, { keepSearch: true, keepSelectedLesson: true });
     render();
   } catch (error) {
     console.error(error);
-    savingQuestion = false;
-    alert('Could not save question changes.');
+    savingLessonEdit = false;
+    alert('Could not save lesson changes.');
     renderLessonCard();
   }
 }
@@ -371,7 +813,9 @@ async function saveAnswerEdit(lesson) {
   savingAnswer = true;
   renderLessonCard();
   try {
-    await patchLesson(lesson.id, { answer: nextAnswer });
+    const patch = { answer: nextAnswer };
+    const updated = await patchLesson(lesson.id, patch);
+    mergeUpdatedLessonRow(lesson.id, patch, updated);
     lesson.answer = nextAnswer;
     editingAnswerId = null;
     answerDraft = '';
@@ -389,6 +833,7 @@ function renderSidebarNav() {
   elements.navMyLearning.classList.toggle('is-active', state.sidebarMode === 'my-learning');
   elements.myLearningContent.classList.toggle('hidden', !state.myLearningExpanded);
   elements.myLearningChevron.classList.toggle('is-open', state.myLearningExpanded);
+  renderCourseList();
 
   elements.learningSidebar.classList.toggle('is-collapsed', state.leftPanelCollapsed);
   elements.sidePanel.classList.toggle('is-collapsed', state.rightPanelCollapsed);
@@ -404,6 +849,170 @@ function renderSidebarNav() {
   elements.toggleRightPanelButton.innerHTML = state.rightPanelCollapsed
     ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 6l-6 6 6 6" /></svg>'
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6" /></svg>';
+}
+
+function renderCourseList() {
+  if (!courseSummaries.length) {
+    elements.courseList.innerHTML = '<p class="course-list-empty">No courses yet</p>';
+    return;
+  }
+
+  elements.courseList.innerHTML = courseSummaries.map((summary) => {
+    const isEditing = editingCourseName === summary.name;
+    return `
+      <div class="course-nav-row ${summary.name === state.selectedCourseName ? 'is-active' : ''} ${isEditing ? 'is-editing' : ''}">
+        ${isEditing ? `
+          <div class="course-rename-editor">
+            <input id="courseRenameInput" type="text" value="${escapeHtml(courseNameDraft)}" ${savingCourseName ? 'disabled' : ''} />
+            <button class="course-mini-button" data-save-course-name="${escapeHtml(summary.name)}" type="button" title="Save course name" aria-label="Save course name" ${savingCourseName ? 'disabled' : ''}>&#10003;</button>
+            <button class="course-mini-button" data-cancel-course-name="${escapeHtml(summary.name)}" type="button" title="Cancel rename" aria-label="Cancel rename" ${savingCourseName ? 'disabled' : ''}>&times;</button>
+          </div>
+        ` : `
+          <button class="course-nav-item" data-course-name="${escapeHtml(summary.name)}" type="button">
+            <span>${escapeHtml(summary.name)}</span>
+            <span>${summary.totalLessons} lessons</span>
+          </button>
+          <button class="course-action-button" data-edit-course-name="${escapeHtml(summary.name)}" type="button" aria-label="Rename ${escapeHtml(summary.name)} course" title="Rename course">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4.75 19.25h4.1L18.6 9.5a2.12 2.12 0 0 0-3-3L5.85 16.25l-1.1 3Z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="m14.6 7.5 1.9 1.9" />
+            </svg>
+          </button>
+          <button class="course-action-button is-danger" data-delete-course-name="${escapeHtml(summary.name)}" type="button" aria-label="Delete ${escapeHtml(summary.name)} course" title="Delete course">&times;</button>
+        `}
+      </div>
+    `;
+  }).join('');
+
+  elements.courseList.querySelectorAll('[data-course-name]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextCourseName = button.dataset.courseName;
+      if (nextCourseName === state.selectedCourseName) {
+        const firstLesson = flattenLessons(course)[0];
+        if (firstLesson) setSelectedLesson(firstLesson.id);
+        return;
+      }
+      setActiveCourse(nextCourseName);
+      render();
+    });
+  });
+
+  elements.courseList.querySelectorAll('[data-delete-course-name]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      deleteCourseByName(button.dataset.deleteCourseName);
+    });
+  });
+
+  elements.courseList.querySelectorAll('[data-edit-course-name]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      startCourseRename(button.dataset.editCourseName);
+    });
+  });
+
+  elements.courseList.querySelector('#courseRenameInput')?.addEventListener('input', (event) => {
+    courseNameDraft = event.target.value;
+  });
+  elements.courseList.querySelector('#courseRenameInput')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveCourseRename();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelCourseRename();
+    }
+  });
+  elements.courseList.querySelector('[data-save-course-name]')?.addEventListener('click', saveCourseRename);
+  elements.courseList.querySelector('[data-cancel-course-name]')?.addEventListener('click', cancelCourseRename);
+}
+
+function renderLessonImportDialog() {
+  elements.lessonImportOverlay.classList.toggle('hidden', !lessonImportOpen);
+  elements.singleLessonModeButton.classList.toggle('is-active', lessonImportMode === 'single');
+  elements.bulkLessonModeButton.classList.toggle('is-active', lessonImportMode === 'bulk');
+  if (!lessonImportOpen) {
+    elements.lessonImportForm.innerHTML = '';
+    return;
+  }
+
+  const progressPercent = lessonImportProgress.total
+    ? Math.round((lessonImportProgress.completed / lessonImportProgress.total) * 100)
+    : 0;
+  const courseValue = escapeHtml(lessonImportDraft.courseName || state.selectedCourseName || course.title || '');
+  const progressMarkup = savingLessonImport || lessonImportStatus ? `
+    <div class="lesson-import-progress">
+      <div class="lesson-import-progress-meta">
+        <span>${escapeHtml(lessonImportStatus || 'Preparing import...')}</span>
+        <span>${progressPercent}%</span>
+      </div>
+      <div class="lesson-import-progress-track">
+        <span style="width: ${progressPercent}%"></span>
+      </div>
+    </div>
+  ` : '';
+
+  const sharedCourseField = `
+    <label class="lesson-import-field">
+      <span>Course name</span>
+      <input data-import-field name="courseName" type="text" value="${courseValue}" placeholder="Course name" ${savingLessonImport ? 'disabled' : ''} />
+    </label>
+  `;
+
+  elements.lessonImportForm.innerHTML = lessonImportMode === 'single' ? `
+    ${sharedCourseField}
+    <div class="lesson-import-grid">
+      <label class="lesson-import-field">
+        <span>Module</span>
+        <input data-import-field name="module" type="text" value="${escapeHtml(lessonImportDraft.module)}" placeholder="Module name" ${savingLessonImport ? 'disabled' : ''} />
+      </label>
+      <label class="lesson-import-field">
+        <span>Category</span>
+        <input data-import-field name="category" type="text" value="${escapeHtml(lessonImportDraft.category)}" placeholder="Python & Coding" ${savingLessonImport ? 'disabled' : ''} />
+      </label>
+    </div>
+    <label class="lesson-import-field">
+      <span>Tags</span>
+      <input data-import-field name="tags" type="text" value="${escapeHtml(lessonImportDraft.tags)}" placeholder="Python, strings, APIs" ${savingLessonImport ? 'disabled' : ''} />
+    </label>
+    <label class="lesson-import-field">
+      <span>Question markdown</span>
+      <textarea data-import-field name="question" placeholder="Question in markdown..." ${savingLessonImport ? 'disabled' : ''}>${escapeHtml(lessonImportDraft.question)}</textarea>
+    </label>
+    <label class="lesson-import-field">
+      <span>Answer markdown</span>
+      <textarea data-import-field name="answer" class="is-large" placeholder="Answer in markdown..." ${savingLessonImport ? 'disabled' : ''}>${escapeHtml(lessonImportDraft.answer)}</textarea>
+    </label>
+    ${lessonImportError ? `<p class="lesson-import-error">${escapeHtml(lessonImportError)}</p>` : ''}
+    ${progressMarkup}
+    <div class="lesson-import-actions">
+      <button id="cancelLessonImportButton" class="confirm-button secondary" type="button" ${savingLessonImport ? 'disabled' : ''}>Cancel</button>
+      <button id="saveLessonImportButton" class="confirm-button primary" type="button" ${savingLessonImport ? 'disabled' : ''}>${savingLessonImport ? 'Uploading...' : 'Add Lesson'}</button>
+    </div>
+  ` : `
+    ${sharedCourseField}
+    <div class="lesson-import-hint">
+      Strict JSON schema: each item must contain exactly <code>question</code>, <code>type</code>, <code>category</code>, <code>tags</code>, and <code>answer</code>.
+    </div>
+    <label class="lesson-import-field">
+      <span>Bulk JSON</span>
+      <textarea data-import-field name="json" class="is-json" placeholder='[{"question":"...","type":"Basic","category":"...","tags":["Python"],"answer":"..."}]' ${savingLessonImport ? 'disabled' : ''}>${escapeHtml(lessonImportDraft.json)}</textarea>
+    </label>
+    ${lessonImportError ? `<p class="lesson-import-error">${escapeHtml(lessonImportError)}</p>` : ''}
+    ${progressMarkup}
+    <div class="lesson-import-actions">
+      <button id="cancelLessonImportButton" class="confirm-button secondary" type="button" ${savingLessonImport ? 'disabled' : ''}>Cancel</button>
+      <button id="saveLessonImportButton" class="confirm-button primary" type="button" ${savingLessonImport ? 'disabled' : ''}>${savingLessonImport ? 'Uploading...' : 'Import JSON'}</button>
+    </div>
+  `;
+
+  elements.lessonImportForm.querySelectorAll('[data-import-field]').forEach((field) => {
+    field.addEventListener('input', updateLessonImportDraft);
+    field.addEventListener('change', updateLessonImportDraft);
+  });
+  elements.lessonImportForm.querySelector('#cancelLessonImportButton')?.addEventListener('click', closeLessonImportDialog);
+  elements.lessonImportForm.querySelector('#saveLessonImportButton')?.addEventListener('click', saveLessonImport);
 }
 
 function renderModuleList() {
@@ -842,6 +1451,7 @@ function renderLessonCard() {
   const lesson = getLessonById(course, state.selectedLessonId);
   if (!lesson) {
     elements.lessonCard.classList.add('hidden');
+    elements.lessonCard.classList.remove('is-editing-lesson');
     elements.lessonEmptyState.classList.remove('hidden');
     elements.breadcrumbRow.innerHTML = '';
     elements.selectedBookmarkLabel.innerHTML = '';
@@ -855,51 +1465,85 @@ function renderLessonCard() {
   elements.lessonCard.classList.remove('is-advancing', 'is-entering');
   renderBreadcrumb(lesson);
 
-  const isEditingQuestion = editingQuestionId === lesson.id;
-  elements.editQuestionButton.disabled = savingQuestion;
-  elements.editQuestionButton.classList.toggle('is-active', isEditingQuestion);
-  elements.editQuestionButton.title = isEditingQuestion ? 'Editing question markdown' : 'Edit question markdown';
+  const isEditingLesson = editingLessonId === lesson.id;
+  elements.lessonCard.classList.toggle('is-editing-lesson', isEditingLesson);
+  elements.editQuestionButton.disabled = savingLessonEdit;
+  elements.editQuestionButton.classList.toggle('is-active', isEditingLesson);
+  elements.editQuestionButton.title = isEditingLesson ? 'Editing lesson' : 'Edit lesson';
   elements.editQuestionButton.setAttribute(
     'aria-label',
-    isEditingQuestion ? 'Editing question markdown' : 'Edit question markdown',
+    isEditingLesson ? 'Editing lesson' : 'Edit lesson',
   );
   elements.editQuestionButton.onclick = () => {
-    if (savingQuestion) return;
-    editingQuestionId = lesson.id;
-    questionDraft = lesson.question || '';
+    if (savingLessonEdit) return;
+    editingAnswerId = null;
+    answerDraft = '';
+    editingLessonId = lesson.id;
+    lessonEditDraft = buildLessonEditDraft(lesson);
     renderLessonCard();
-    elements.lessonQuestion.querySelector('#questionEditorTextarea')?.focus();
+    elements.lessonQuestion.querySelector('[name="courseName"]')?.focus();
+  };
+  elements.deleteLessonButton.disabled = savingLessonEdit || savingAnswer;
+  elements.deleteLessonButton.onclick = () => {
+    if (savingLessonEdit || savingAnswer) return;
+    deleteCurrentLesson(lesson);
   };
 
-  if (isEditingQuestion) {
+  if (isEditingLesson) {
+    const draft = lessonEditDraft || buildLessonEditDraft(lesson);
     elements.lessonQuestion.innerHTML = `
-      <div class="question-editor">
-        <textarea id="questionEditorTextarea" spellcheck="false">${escapeHtml(questionDraft)}</textarea>
+      <div class="lesson-full-editor">
+        <div class="lesson-import-grid">
+          <label class="lesson-import-field">
+            <span>Course name</span>
+            <input data-lesson-edit-field name="courseName" type="text" value="${escapeHtml(draft.courseName)}" ${savingLessonEdit ? 'disabled' : ''} />
+          </label>
+          <label class="lesson-import-field">
+            <span>Module</span>
+            <input data-lesson-edit-field name="module" type="text" value="${escapeHtml(draft.module)}" placeholder="Module name" ${savingLessonEdit ? 'disabled' : ''} />
+          </label>
+        </div>
+        <label class="lesson-import-field">
+          <span>Category</span>
+          <input data-lesson-edit-field name="category" type="text" value="${escapeHtml(draft.category)}" ${savingLessonEdit ? 'disabled' : ''} />
+        </label>
+        <label class="lesson-import-field">
+          <span>Tags</span>
+          <input data-lesson-edit-field name="tags" type="text" value="${escapeHtml(draft.tags)}" placeholder="Python, APIs, RAG" ${savingLessonEdit ? 'disabled' : ''} />
+        </label>
+        <label class="lesson-import-field">
+          <span>Question markdown</span>
+          <textarea data-lesson-edit-field name="question" spellcheck="false" ${savingLessonEdit ? 'disabled' : ''}>${escapeHtml(draft.question)}</textarea>
+        </label>
+        <label class="lesson-import-field">
+          <span>Answer markdown</span>
+          <textarea data-lesson-edit-field name="answer" class="is-large" spellcheck="false" ${savingLessonEdit ? 'disabled' : ''}>${escapeHtml(draft.answer)}</textarea>
+        </label>
         <div class="answer-editor-actions">
-          <button id="cancelQuestionEditButton" class="answer-editor-button secondary" type="button" title="Cancel changes" aria-label="Cancel changes" ${savingQuestion ? 'disabled' : ''}>&times;</button>
-          <button id="saveQuestionEditButton" class="answer-editor-button primary" type="button" title="Confirm changes" aria-label="Confirm changes" ${savingQuestion ? 'disabled' : ''}>${savingQuestion ? '...' : '&#10003;'}</button>
+          <button id="cancelLessonEditButton" class="answer-editor-button secondary" type="button" title="Cancel changes" aria-label="Cancel changes" ${savingLessonEdit ? 'disabled' : ''}>&times;</button>
+          <button id="saveLessonEditButton" class="answer-editor-button primary" type="button" title="Confirm changes" aria-label="Confirm changes" ${savingLessonEdit ? 'disabled' : ''}>${savingLessonEdit ? '...' : '&#10003;'}</button>
         </div>
       </div>
     `;
-    const questionTextarea = elements.lessonQuestion.querySelector('#questionEditorTextarea');
-    questionTextarea?.addEventListener('input', (event) => {
-      questionDraft = event.target.value;
+    elements.lessonQuestion.querySelectorAll('[data-lesson-edit-field]').forEach((field) => {
+      field.addEventListener('input', updateLessonEditDraft);
+      field.addEventListener('change', updateLessonEditDraft);
     });
-    elements.lessonQuestion.querySelector('#cancelQuestionEditButton')?.addEventListener('click', cancelQuestionEdit);
-    elements.lessonQuestion.querySelector('#saveQuestionEditButton')?.addEventListener('click', () => saveQuestionEdit(lesson));
+    elements.lessonQuestion.querySelector('#cancelLessonEditButton')?.addEventListener('click', cancelLessonEdit);
+    elements.lessonQuestion.querySelector('#saveLessonEditButton')?.addEventListener('click', () => saveLessonEdit(lesson));
   } else {
     elements.lessonQuestion.innerHTML = renderMarkdownToHtml(lesson.question);
   }
 
   const tags = Array.isArray(lesson.tags) ? lesson.tags.filter(Boolean) : [];
-  elements.lessonTags.classList.toggle('hidden', !tags.length);
+  elements.lessonTags.classList.toggle('hidden', isEditingLesson || !tags.length);
   elements.lessonTags.innerHTML = tags
     .slice(0, 6)
     .map((tag) => `<span>${escapeHtml(tag)}</span>`)
     .join('');
   const isEditingAnswer = editingAnswerId === lesson.id;
-  elements.copyAnswerButton.disabled = isEditingAnswer || savingAnswer;
-  elements.editAnswerButton.disabled = savingAnswer;
+  elements.copyAnswerButton.disabled = isEditingLesson || isEditingAnswer || savingAnswer;
+  elements.editAnswerButton.disabled = isEditingLesson || savingAnswer;
   elements.editAnswerButton.classList.toggle('is-active', isEditingAnswer);
   elements.editAnswerButton.title = isEditingAnswer ? 'Editing raw markdown' : 'Edit raw markdown';
   elements.editAnswerButton.setAttribute(
@@ -919,13 +1563,17 @@ function renderLessonCard() {
 
   elements.editAnswerButton.onclick = () => {
     if (savingAnswer) return;
+    editingLessonId = null;
+    lessonEditDraft = null;
     editingAnswerId = lesson.id;
     answerDraft = lesson.answer || '';
     renderLessonCard();
     elements.lessonAnswer.querySelector('#answerEditorTextarea')?.focus();
   };
 
-  if (isEditingAnswer) {
+  if (isEditingLesson) {
+    elements.lessonAnswer.innerHTML = '<p class="lesson-edit-muted">Answer markdown is included in the lesson editor above.</p>';
+  } else if (isEditingAnswer) {
     elements.lessonAnswer.innerHTML = `
       <div class="answer-editor">
         <textarea id="answerEditorTextarea" spellcheck="false">${escapeHtml(answerDraft)}</textarea>
@@ -1246,13 +1894,14 @@ function bindEvents() {
     render();
   });
 
-  elements.courseNavItem.addEventListener('click', () => {
-    state.sidebarMode = 'my-learning';
-    state.myLearningExpanded = true;
-    const firstLesson = flattenLessons(course)[0];
-    if (firstLesson) state.selectedLessonId = firstLesson.id;
-    persist();
-    render();
+  elements.addLessonsButton.addEventListener('click', openLessonImportDialog);
+  elements.closeLessonImportButton.addEventListener('click', closeLessonImportDialog);
+  elements.singleLessonModeButton.addEventListener('click', () => setLessonImportMode('single'));
+  elements.bulkLessonModeButton.addEventListener('click', () => setLessonImportMode('bulk'));
+  elements.lessonImportOverlay.addEventListener('click', (event) => {
+    if (event.target === elements.lessonImportOverlay) {
+      closeLessonImportDialog();
+    }
   });
 
   elements.notesTabButton.addEventListener('click', () => {
@@ -1351,6 +2000,7 @@ function render() {
   renderModuleList();
   renderLessonCard();
   renderSidePanel();
+  renderLessonImportDialog();
 }
 
 async function init() {
@@ -1363,9 +2013,15 @@ async function init() {
       fetchBookmarkLabels(),
       fetchBookmarkLabelAssignments(),
     ]);
-    course = buildLearningCourse(applyBookmarkAssignments(rows, assignments));
+    allQuestionRows = rows;
+    allBookmarkAssignments = assignments;
+    courseSummaries = getCourseSummaries(rows);
     bookmarkLabels = labels;
-    state = buildState(loadLearningState(), course);
+    const savedState = loadLearningState();
+    const savedCourseName = courseSummaries.some((summary) => summary.name === savedState.selectedCourseName)
+      ? savedState.selectedCourseName
+      : courseSummaries[0]?.name;
+    setActiveCourse(savedCourseName, { keepSearch: true });
     bindEvents();
     render();
   } catch (error) {

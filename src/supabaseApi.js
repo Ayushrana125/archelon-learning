@@ -39,7 +39,7 @@ function isMissingSchemaError(error, name) {
 export async function fetchInterviewQuestions() {
   const query = [
     'select=id,course_name,order_index,question,answer,module,category,tags,mark_as_complete,bookmark,notes',
-    'order=order_index.asc',
+    'order=course_name.asc,order_index.asc',
   ].join('&');
   return request(`${tableName}?${query}`);
 }
@@ -136,6 +136,37 @@ export async function deleteBookmarkLabel(labelId) {
     method: 'DELETE',
   });
   return rows;
+}
+
+export async function createInterviewQuestions(rows) {
+  const inserted = await request(tableName, {
+    method: 'POST',
+    body: JSON.stringify(rows),
+  });
+  return Array.isArray(inserted) ? inserted : [inserted].filter(Boolean);
+}
+
+export async function deleteInterviewQuestion(id) {
+  const encodedId = encodeURIComponent(id);
+  return request(`${tableName}?id=eq.${encodedId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function deleteInterviewQuestionsByCourse(courseName) {
+  const encodedCourseName = encodeURIComponent(courseName);
+  return request(`${tableName}?course_name=eq.${encodedCourseName}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function updateInterviewQuestionsByCourse(courseName, patch) {
+  const encodedCourseName = encodeURIComponent(courseName);
+  const rows = await request(`${tableName}?course_name=eq.${encodedCourseName}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+  return Array.isArray(rows) ? rows : [rows].filter(Boolean);
 }
 
 export async function updateInterviewQuestion(id, patch) {
