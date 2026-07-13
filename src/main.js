@@ -18,10 +18,12 @@ import {
 import {
   addBookmarkLabelAssignment,
   createBookmarkLabel,
+  deleteBookmarkLabel,
   fetchBookmarkLabelByName,
   fetchBookmarkLabelAssignments,
   fetchBookmarkLabels,
   fetchInterviewQuestions,
+  removeBookmarkLabelAssignmentsByLabel,
   removeBookmarkLabelAssignment,
   updateInterviewQuestion,
 } from './supabaseApi.js';
@@ -38,8 +40,26 @@ let bookmarkLabelDraftName = '';
 let bookmarkLabelError = '';
 let savingBookmarkLabel = false;
 let progressGlowTimer = null;
+let editingAnswerId = null;
+let answerDraft = '';
+let savingAnswer = false;
+let answerCopiedTimer = null;
+let answerConfirmResolver = null;
+let editingQuestionId = null;
+let questionDraft = '';
+let savingQuestion = false;
 
-const labelColors = ['#00c9b1', '#22c55e', '#3b82f6', '#f59e0b', '#ef4444'];
+const labelColors = [
+  '#00c9b1',
+  '#22c55e',
+  '#3b82f6',
+  '#8b5cf6',
+  '#ec4899',
+  '#f59e0b',
+  '#ef4444',
+  '#14b8a6',
+  '#64748b',
+];
 
 const elements = {
   app: document.getElementById('app'),
@@ -66,8 +86,11 @@ const elements = {
   lessonCard: document.getElementById('lessonCard'),
   lessonEmptyState: document.getElementById('lessonEmptyState'),
   lessonQuestion: document.getElementById('lessonQuestion'),
+  editQuestionButton: document.getElementById('editQuestionButton'),
   lessonTags: document.getElementById('lessonTags'),
   lessonAnswer: document.getElementById('lessonAnswer'),
+  copyAnswerButton: document.getElementById('copyAnswerButton'),
+  editAnswerButton: document.getElementById('editAnswerButton'),
   bookmarkLessonButton: document.getElementById('bookmarkLessonButton'),
   selectedBookmarkLabel: document.getElementById('selectedBookmarkLabel'),
   bookmarkLabelPicker: document.getElementById('bookmarkLabelPicker'),
@@ -90,6 +113,11 @@ const elements = {
   bookmarkLabelFilters: document.getElementById('bookmarkLabelFilters'),
   bookmarksList: document.getElementById('bookmarksList'),
   bookmarksEmptyState: document.getElementById('bookmarksEmptyState'),
+  answerConfirmOverlay: document.getElementById('answerConfirmOverlay'),
+  answerConfirmTitle: document.getElementById('answerConfirmTitle'),
+  answerConfirmText: document.getElementById('answerConfirmText'),
+  cancelAnswerConfirmButton: document.getElementById('cancelAnswerConfirmButton'),
+  confirmAnswerUpdateButton: document.getElementById('confirmAnswerUpdateButton'),
 };
 
 function persist() {
@@ -105,6 +133,12 @@ function setSelectedLesson(lessonId) {
   state.selectedLessonId = lessonId;
   bookmarkPickerOpen = false;
   addingBookmarkLabel = false;
+  editingAnswerId = null;
+  answerDraft = '';
+  savingAnswer = false;
+  editingQuestionId = null;
+  questionDraft = '';
+  savingQuestion = false;
   persist();
   render();
 }
@@ -190,6 +224,165 @@ function showCompletionToast(completedCount) {
       elements.completionToast.classList.remove('is-leaving');
     }, 220);
   }, 2600);
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '-999px';
+  textarea.style.opacity = '0';
+  document.body.append(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+}
+
+function showAnswerToolFeedback(button, label) {
+  if (!button) return;
+  window.clearTimeout(answerCopiedTimer);
+  const previousTitle = button.title;
+  const previousLabel = button.getAttribute('aria-label');
+  button.classList.add('has-feedback');
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  answerCopiedTimer = window.setTimeout(() => {
+    button.classList.remove('has-feedback');
+    button.title = previousTitle;
+    button.setAttribute('aria-label', previousLabel);
+  }, 1200);
+}
+
+function resolveAnswerConfirm(confirmed) {
+  if (!answerConfirmResolver) return;
+  const resolver = answerConfirmResolver;
+  answerConfirmResolver = null;
+  elements.answerConfirmOverlay.classList.add('hidden');
+  document.removeEventListener('keydown', handleAnswerConfirmKeydown);
+  resolver(confirmed);
+}
+
+elements.cancelAnswerConfirmButton.addEventListener('click', () => resolveAnswerConfirm(false));
+elements.confirmAnswerUpdateButton.addEventListener('click', () => resolveAnswerConfirm(true));
+elements.answerConfirmOverlay.addEventListener('click', (event) => {
+  if (event.target === elements.answerConfirmOverlay) {
+    resolveAnswerConfirm(false);
+  }
+});
+
+function handleAnswerConfirmKeydown(event) {
+  if (event.key === 'Escape') {
+    resolveAnswerConfirm(false);
+  }
+}
+
+function confirmMarkdownUpdate({ title, text, actionLabel = 'Confirm Changes' }) {
+  elements.answerConfirmTitle.textContent = title;
+  elements.answerConfirmText.textContent = text;
+  elements.confirmAnswerUpdateButton.textContent = actionLabel;
+  elements.answerConfirmOverlay.classList.remove('hidden');
+  document.addEventListener('keydown', handleAnswerConfirmKeydown);
+  elements.confirmAnswerUpdateButton.focus();
+
+  return new Promise((resolve) => {
+    answerConfirmResolver = resolve;
+  });
+}
+
+function cancelQuestionEdit() {
+  editingQuestionId = null;
+  questionDraft = '';
+  savingQuestion = false;
+  renderLessonCard();
+}
+
+async function saveQuestionEdit(lesson) {
+  const textarea = elements.lessonQuestion.querySelector('#questionEditorTextarea');
+  const nextQuestion = textarea?.value ?? questionDraft;
+  questionDraft = nextQuestion;
+
+  if (!nextQuestion.trim()) {
+    alert('Question cannot be empty.');
+    return;
+  }
+
+  if (nextQuestion === lesson.question) {
+    cancelQuestionEdit();
+    return;
+  }
+
+  const confirmed = await confirmMarkdownUpdate({
+    title: 'Confirm question update',
+    text: 'Save these markdown changes to this question?',
+  });
+  if (!confirmed) return;
+
+  savingQuestion = true;
+  renderLessonCard();
+  try {
+    await patchLesson(lesson.id, { question: nextQuestion });
+    lesson.question = nextQuestion;
+    editingQuestionId = null;
+    questionDraft = '';
+    savingQuestion = false;
+    render();
+  } catch (error) {
+    console.error(error);
+    savingQuestion = false;
+    alert('Could not save question changes.');
+    renderLessonCard();
+  }
+}
+
+function cancelAnswerEdit() {
+  editingAnswerId = null;
+  answerDraft = '';
+  savingAnswer = false;
+  renderLessonCard();
+}
+
+async function saveAnswerEdit(lesson) {
+  const textarea = elements.lessonAnswer.querySelector('#answerEditorTextarea');
+  const nextAnswer = textarea?.value ?? answerDraft;
+  answerDraft = nextAnswer;
+
+  if (!nextAnswer.trim()) {
+    alert('Answer cannot be empty.');
+    return;
+  }
+
+  if (nextAnswer === lesson.answer) {
+    cancelAnswerEdit();
+    return;
+  }
+
+  const confirmed = await confirmMarkdownUpdate({
+    title: 'Confirm answer update',
+    text: 'Save these markdown changes to this answer?',
+  });
+  if (!confirmed) return;
+
+  savingAnswer = true;
+  renderLessonCard();
+  try {
+    await patchLesson(lesson.id, { answer: nextAnswer });
+    lesson.answer = nextAnswer;
+    editingAnswerId = null;
+    answerDraft = '';
+    savingAnswer = false;
+    renderLessonCard();
+  } catch (error) {
+    console.error(error);
+    savingAnswer = false;
+    alert('Could not save answer changes.');
+    renderLessonCard();
+  }
 }
 
 function renderSidebarNav() {
@@ -420,6 +613,50 @@ async function toggleBookmarkLabel(lesson, labelId) {
   }
 }
 
+function removeLabelFromLocalState(labelId) {
+  bookmarkLabels = bookmarkLabels.filter((label) => label.id !== labelId);
+  Object.keys(state.lessonState).forEach((lessonId) => {
+    const lessonState = state.lessonState[lessonId];
+    const nextLabelIds = getBookmarkLabelIds(lessonState).filter((item) => item !== labelId);
+    state.lessonState[lessonId] = {
+      ...lessonState,
+      bookmarked: nextLabelIds.length > 0,
+      bookmarkLabelId: nextLabelIds[0] || null,
+      bookmarkLabelIds: nextLabelIds,
+    };
+  });
+  if (state.bookmarkLabelFilterId === labelId) {
+    state.bookmarkLabelFilterId = 'all';
+  }
+  persist();
+}
+
+async function deleteGlobalBookmarkLabel(labelId) {
+  const label = getBookmarkLabel(labelId);
+  if (!label) return;
+
+  const confirmed = await confirmMarkdownUpdate({
+    title: 'Delete bookmark label',
+    text: `Remove "${label.name}" from the label list and all bookmarked lessons?`,
+    actionLabel: 'Delete Label',
+  });
+  if (!confirmed) return;
+
+  try {
+    await removeBookmarkLabelAssignmentsByLabel(labelId);
+    await deleteBookmarkLabel(labelId);
+    removeLabelFromLocalState(labelId);
+    addingBookmarkLabel = false;
+    bookmarkLabelDraftName = '';
+    bookmarkLabelError = '';
+    render();
+  } catch (error) {
+    console.error(error);
+    bookmarkLabelError = 'Could not delete label. Check table delete permissions.';
+    renderBookmarkLabelPicker(getLessonById(course, state.selectedLessonId), state.lessonState[state.selectedLessonId]);
+  }
+}
+
 async function clearBookmark(lesson) {
   const previous = state.lessonState[lesson.id];
   const previousLabelIds = getBookmarkLabelIds(previous);
@@ -456,11 +693,14 @@ function renderBookmarkLabelPicker(lesson, lessonState) {
   const selectedLabelIds = getBookmarkLabelIds(lessonState);
   const labelRows = bookmarkLabels.length
     ? bookmarkLabels.map((label) => `
-        <button class="bookmark-label-option ${selectedLabelIds.includes(label.id) ? 'is-selected' : ''}" data-label-id="${escapeHtml(label.id)}" type="button">
-          <span class="label-dot" style="background: ${escapeHtml(label.color || '#00c9b1')}"></span>
-          <span>${escapeHtml(label.name)}</span>
-          <span class="label-check">${selectedLabelIds.includes(label.id) ? 'On' : ''}</span>
-        </button>
+        <div class="bookmark-label-option-row ${selectedLabelIds.includes(label.id) ? 'is-selected' : ''}">
+          <button class="bookmark-label-option" data-label-id="${escapeHtml(label.id)}" type="button">
+            <span class="label-dot" style="background: ${escapeHtml(label.color || '#00c9b1')}"></span>
+            <span>${escapeHtml(label.name)}</span>
+            <span class="label-check">${selectedLabelIds.includes(label.id) ? 'On' : ''}</span>
+          </button>
+          <button class="bookmark-label-delete" data-delete-label-id="${escapeHtml(label.id)}" type="button" aria-label="Delete ${escapeHtml(label.name)} label" title="Delete label">&times;</button>
+        </div>
       `).join('')
     : '<p class="bookmark-label-empty">No labels yet.</p>';
 
@@ -505,6 +745,13 @@ function renderBookmarkLabelPicker(lesson, lessonState) {
 
   elements.bookmarkLabelPicker.querySelectorAll('[data-label-id]').forEach((button) => {
     button.addEventListener('click', () => toggleBookmarkLabel(lesson, button.dataset.labelId));
+  });
+
+  elements.bookmarkLabelPicker.querySelectorAll('[data-delete-label-id]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      deleteGlobalBookmarkLabel(button.dataset.deleteLabelId);
+    });
   });
 
   elements.bookmarkLabelPicker.querySelectorAll('[data-label-color]').forEach((button) => {
@@ -608,14 +855,95 @@ function renderLessonCard() {
   elements.lessonCard.classList.remove('is-advancing', 'is-entering');
   renderBreadcrumb(lesson);
 
-  elements.lessonQuestion.textContent = lesson.question;
+  const isEditingQuestion = editingQuestionId === lesson.id;
+  elements.editQuestionButton.disabled = savingQuestion;
+  elements.editQuestionButton.classList.toggle('is-active', isEditingQuestion);
+  elements.editQuestionButton.title = isEditingQuestion ? 'Editing question markdown' : 'Edit question markdown';
+  elements.editQuestionButton.setAttribute(
+    'aria-label',
+    isEditingQuestion ? 'Editing question markdown' : 'Edit question markdown',
+  );
+  elements.editQuestionButton.onclick = () => {
+    if (savingQuestion) return;
+    editingQuestionId = lesson.id;
+    questionDraft = lesson.question || '';
+    renderLessonCard();
+    elements.lessonQuestion.querySelector('#questionEditorTextarea')?.focus();
+  };
+
+  if (isEditingQuestion) {
+    elements.lessonQuestion.innerHTML = `
+      <div class="question-editor">
+        <textarea id="questionEditorTextarea" spellcheck="false">${escapeHtml(questionDraft)}</textarea>
+        <div class="answer-editor-actions">
+          <button id="cancelQuestionEditButton" class="answer-editor-button secondary" type="button" title="Cancel changes" aria-label="Cancel changes" ${savingQuestion ? 'disabled' : ''}>&times;</button>
+          <button id="saveQuestionEditButton" class="answer-editor-button primary" type="button" title="Confirm changes" aria-label="Confirm changes" ${savingQuestion ? 'disabled' : ''}>${savingQuestion ? '...' : '&#10003;'}</button>
+        </div>
+      </div>
+    `;
+    const questionTextarea = elements.lessonQuestion.querySelector('#questionEditorTextarea');
+    questionTextarea?.addEventListener('input', (event) => {
+      questionDraft = event.target.value;
+    });
+    elements.lessonQuestion.querySelector('#cancelQuestionEditButton')?.addEventListener('click', cancelQuestionEdit);
+    elements.lessonQuestion.querySelector('#saveQuestionEditButton')?.addEventListener('click', () => saveQuestionEdit(lesson));
+  } else {
+    elements.lessonQuestion.innerHTML = renderMarkdownToHtml(lesson.question);
+  }
+
   const tags = Array.isArray(lesson.tags) ? lesson.tags.filter(Boolean) : [];
   elements.lessonTags.classList.toggle('hidden', !tags.length);
   elements.lessonTags.innerHTML = tags
     .slice(0, 6)
     .map((tag) => `<span>${escapeHtml(tag)}</span>`)
     .join('');
-  elements.lessonAnswer.innerHTML = renderMarkdownToHtml(lesson.answer);
+  const isEditingAnswer = editingAnswerId === lesson.id;
+  elements.copyAnswerButton.disabled = isEditingAnswer || savingAnswer;
+  elements.editAnswerButton.disabled = savingAnswer;
+  elements.editAnswerButton.classList.toggle('is-active', isEditingAnswer);
+  elements.editAnswerButton.title = isEditingAnswer ? 'Editing raw markdown' : 'Edit raw markdown';
+  elements.editAnswerButton.setAttribute(
+    'aria-label',
+    isEditingAnswer ? 'Editing answer markdown' : 'Edit answer markdown',
+  );
+
+  elements.copyAnswerButton.onclick = async () => {
+    try {
+      await copyTextToClipboard(lesson.answer || '');
+      showAnswerToolFeedback(elements.copyAnswerButton, 'Copied raw markdown');
+    } catch (error) {
+      console.error(error);
+      alert('Could not copy answer markdown.');
+    }
+  };
+
+  elements.editAnswerButton.onclick = () => {
+    if (savingAnswer) return;
+    editingAnswerId = lesson.id;
+    answerDraft = lesson.answer || '';
+    renderLessonCard();
+    elements.lessonAnswer.querySelector('#answerEditorTextarea')?.focus();
+  };
+
+  if (isEditingAnswer) {
+    elements.lessonAnswer.innerHTML = `
+      <div class="answer-editor">
+        <textarea id="answerEditorTextarea" spellcheck="false">${escapeHtml(answerDraft)}</textarea>
+        <div class="answer-editor-actions">
+          <button id="cancelAnswerEditButton" class="answer-editor-button secondary" type="button" title="Cancel changes" aria-label="Cancel changes" ${savingAnswer ? 'disabled' : ''}>&times;</button>
+          <button id="saveAnswerEditButton" class="answer-editor-button primary" type="button" title="Confirm changes" aria-label="Confirm changes" ${savingAnswer ? 'disabled' : ''}>${savingAnswer ? '...' : '&#10003;'}</button>
+        </div>
+      </div>
+    `;
+    const answerTextarea = elements.lessonAnswer.querySelector('#answerEditorTextarea');
+    answerTextarea?.addEventListener('input', (event) => {
+      answerDraft = event.target.value;
+    });
+    elements.lessonAnswer.querySelector('#cancelAnswerEditButton')?.addEventListener('click', cancelAnswerEdit);
+    elements.lessonAnswer.querySelector('#saveAnswerEditButton')?.addEventListener('click', () => saveAnswerEdit(lesson));
+  } else {
+    elements.lessonAnswer.innerHTML = renderMarkdownToHtml(lesson.answer);
+  }
   elements.bookmarkLessonButton.classList.toggle('is-active', lessonState.bookmarked);
   elements.bookmarkLessonButton.setAttribute('aria-label', lessonState.bookmarked ? 'Remove bookmark' : 'Bookmark lesson');
   elements.bookmarkLessonButton.title = lessonState.bookmarked ? 'Edit bookmark label' : 'Bookmark lesson';

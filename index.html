@@ -99,8 +99,16 @@
         <article id="lessonCard" class="lesson-card hidden">
           <div class="lesson-card-top">
             <div class="lesson-copy">
-              <p class="lesson-label">Question</p>
-              <h1 id="lessonQuestion" class="lesson-question"></h1>
+              <div class="question-section-head">
+                <p class="lesson-label">Question</p>
+                <button id="editQuestionButton" class="answer-tool-button" type="button" aria-label="Edit question markdown" title="Edit question markdown">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.75 19.25h4.1L18.6 9.5a2.12 2.12 0 0 0-3-3L5.85 16.25l-1.1 3Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m14.6 7.5 1.9 1.9" />
+                  </svg>
+                </button>
+              </div>
+              <div id="lessonQuestion" class="lesson-question"></div>
               <div id="lessonTags" class="lesson-tags hidden"></div>
             </div>
             <div class="bookmark-control">
@@ -117,7 +125,23 @@
           <hr class="lesson-divider" />
 
           <div class="answer-section">
-            <p class="lesson-label">Answer</p>
+            <div class="answer-section-head">
+              <p class="lesson-label">Answer</p>
+              <div class="answer-tools">
+                <button id="copyAnswerButton" class="answer-tool-button" type="button" aria-label="Copy answer markdown" title="Copy markdown">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 8.75A2.75 2.75 0 0 1 10.75 6h6.5A2.75 2.75 0 0 1 20 8.75v6.5A2.75 2.75 0 0 1 17.25 18h-6.5A2.75 2.75 0 0 1 8 15.25v-6.5Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5.5 14.5A2.5 2.5 0 0 1 4 12.2V5.8A1.8 1.8 0 0 1 5.8 4h6.4a2.5 2.5 0 0 1 2.3 1.5" />
+                  </svg>
+                </button>
+                <button id="editAnswerButton" class="answer-tool-button" type="button" aria-label="Edit answer markdown" title="Edit markdown">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.75 19.25h4.1L18.6 9.5a2.12 2.12 0 0 0-3-3L5.85 16.25l-1.1 3Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m14.6 7.5 1.9 1.9" />
+                  </svg>
+                </button>
+              </div>
+            </div>
             <div id="lessonAnswer" class="lesson-answer"></div>
           </div>
 
@@ -221,6 +245,25 @@
         </div>
       </aside>
     </div>
+  </div>
+
+  <div id="answerConfirmOverlay" class="confirm-overlay hidden" role="presentation">
+    <section class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="answerConfirmTitle" aria-describedby="answerConfirmText">
+      <div class="confirm-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 3.75 20.25 7.5v5.25c0 4.05-2.5 6.7-8.25 7.5-5.75-.8-8.25-3.45-8.25-7.5V7.5L12 3.75Z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="m8.9 12.4 2.1 2.1 4.4-5" />
+        </svg>
+      </div>
+      <div class="confirm-copy">
+        <h2 id="answerConfirmTitle">Confirm answer update</h2>
+        <p id="answerConfirmText">Save these markdown changes to this lesson?</p>
+      </div>
+      <div class="confirm-actions">
+        <button id="cancelAnswerConfirmButton" class="confirm-button secondary" type="button">Cancel</button>
+        <button id="confirmAnswerUpdateButton" class="confirm-button primary" type="button">Confirm Changes</button>
+      </div>
+    </section>
   </div>
 
   <script type="module" src="/src/main.js"></script>

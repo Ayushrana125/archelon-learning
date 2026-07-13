@@ -118,6 +118,26 @@ export async function removeBookmarkLabelAssignment(questionId, labelId) {
   }
 }
 
+export async function removeBookmarkLabelAssignmentsByLabel(labelId) {
+  const encodedLabelId = encodeURIComponent(labelId);
+  try {
+    return await request(`${labelAssignmentsTableName}?label_id=eq.${encodedLabelId}`, {
+      method: 'DELETE',
+    });
+  } catch (error) {
+    if (!isMissingSchemaError(error, labelAssignmentsTableName)) throw error;
+    return null;
+  }
+}
+
+export async function deleteBookmarkLabel(labelId) {
+  const encodedLabelId = encodeURIComponent(labelId);
+  const rows = await request(`${labelsTableName}?id=eq.${encodedLabelId}`, {
+    method: 'DELETE',
+  });
+  return rows;
+}
+
 export async function updateInterviewQuestion(id, patch) {
   const encodedId = encodeURIComponent(id);
   const rows = await request(`${tableName}?id=eq.${encodedId}`, {
