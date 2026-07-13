@@ -46,6 +46,80 @@ create table if not exists public.learning_bookmark_label_assignments (
   primary key (question_id, label_id)
 );
 
+create table if not exists public.learning_targets (
+  id uuid primary key default gen_random_uuid(),
+  course_name text not null,
+  daily_target integer not null default 0 check (daily_target >= 0),
+  weekly_target integer not null default 0 check (weekly_target >= 0),
+  monthly_target integer not null default 0 check (monthly_target >= 0),
+  start_date date not null default current_date,
+  baseline_completed integer not null default 0 check (baseline_completed >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint learning_targets_course_name_unique unique (course_name),
+  constraint learning_targets_has_target check (
+    daily_target > 0 or weekly_target > 0 or monthly_target > 0
+  )
+);
+
+alter table public.learning_targets
+add column if not exists course_name text not null default 'Claude + Codex Interview Questions';
+
+alter table public.learning_targets
+add column if not exists daily_target integer not null default 0;
+
+alter table public.learning_targets
+add column if not exists weekly_target integer not null default 0;
+
+alter table public.learning_targets
+add column if not exists monthly_target integer not null default 0;
+
+alter table public.learning_targets
+add column if not exists start_date date not null default current_date;
+
+alter table public.learning_targets
+add column if not exists baseline_completed integer not null default 0;
+
+alter table public.learning_targets
+add column if not exists created_at timestamptz not null default now();
+
+alter table public.learning_targets
+add column if not exists updated_at timestamptz not null default now();
+
+alter table public.learning_targets
+drop column if exists target_type;
+
+alter table public.learning_targets
+drop column if exists target_count;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'learning_targets_course_name_unique'
+      and conrelid = 'public.learning_targets'::regclass
+  ) then
+    alter table public.learning_targets
+    add constraint learning_targets_course_name_unique unique (course_name);
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'learning_targets_has_target'
+      and conrelid = 'public.learning_targets'::regclass
+  ) then
+    alter table public.learning_targets
+    add constraint learning_targets_has_target check (
+      daily_target > 0 or weekly_target > 0 or monthly_target > 0
+    );
+  end if;
+end $$;
+
 alter table public.learning_bookmark_labels
 add column if not exists color text not null default '#00c9b1';
 
@@ -89,6 +163,7 @@ create index if not exists learning_bookmark_labels_sort_idx on public.learning_
 create unique index if not exists learning_bookmark_labels_name_unique_idx on public.learning_bookmark_labels (name);
 create index if not exists learning_bookmark_label_assignments_question_idx on public.learning_bookmark_label_assignments (question_id);
 create index if not exists learning_bookmark_label_assignments_label_idx on public.learning_bookmark_label_assignments (label_id);
+create unique index if not exists learning_targets_course_name_unique_idx on public.learning_targets (course_name);
 
 create or replace function public.set_updated_at()
 returns trigger as $$
@@ -101,5 +176,11 @@ $$ language plpgsql;
 drop trigger if exists interview_qa_set_updated_at on public.interview_qa;
 create trigger interview_qa_set_updated_at
 before update on public.interview_qa
+for each row
+execute function public.set_updated_at();
+
+drop trigger if exists learning_targets_set_updated_at on public.learning_targets;
+create trigger learning_targets_set_updated_at
+before update on public.learning_targets
 for each row
 execute function public.set_updated_at();

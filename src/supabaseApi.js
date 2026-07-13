@@ -3,6 +3,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.en
 const tableName = import.meta.env.VITE_SUPABASE_LEARNING_TABLE || 'interview_qa';
 const labelsTableName = import.meta.env.VITE_SUPABASE_LEARNING_LABELS_TABLE || 'learning_bookmark_labels';
 const labelAssignmentsTableName = import.meta.env.VITE_SUPABASE_LEARNING_LABEL_ASSIGNMENTS_TABLE || 'learning_bookmark_label_assignments';
+const targetsTableName = import.meta.env.VITE_SUPABASE_LEARNING_TARGETS_TABLE || 'learning_targets';
 
 function assertConfig() {
   if (!supabaseUrl || !supabaseAnonKey) {
@@ -34,6 +35,13 @@ async function request(path, options = {}) {
 
 function isMissingSchemaError(error, name) {
   return error.message.includes('42P01') || error.message.includes(`${name}" does not exist`);
+}
+
+function isMissingTargetSchemaError(error) {
+  return isMissingSchemaError(error, targetsTableName)
+    || error.message.includes('42703')
+    || error.message.includes('learning_targets.daily_target')
+    || error.message.includes('daily_target');
 }
 
 export async function fetchInterviewQuestions() {
@@ -81,10 +89,38 @@ export async function fetchBookmarkLabelAssignments() {
   }
 }
 
+export async function fetchLearningTargets() {
+  const query = [
+    'select=id,course_name,daily_target,weekly_target,monthly_target,start_date,baseline_completed,created_at,updated_at',
+    'order=course_name.asc',
+  ].join('&');
+  return request(`${targetsTableName}?${query}`);
+}
+
 export async function createBookmarkLabel(label) {
   const rows = await request(labelsTableName, {
     method: 'POST',
     body: JSON.stringify(label),
+  });
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+export async function updateBookmarkLabel(labelId, patch) {
+  const encodedLabelId = encodeURIComponent(labelId);
+  const rows = await request(`${labelsTableName}?id=eq.${encodedLabelId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+export async function upsertLearningTarget(target) {
+  const rows = await request(`${targetsTableName}?on_conflict=course_name`, {
+    method: 'POST',
+    body: JSON.stringify(target),
+    headers: {
+      Prefer: 'resolution=merge-duplicates,return=representation',
+    },
   });
   return Array.isArray(rows) ? rows[0] : rows;
 }

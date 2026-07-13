@@ -26,10 +26,13 @@ import {
   fetchBookmarkLabelAssignments,
   fetchBookmarkLabels,
   fetchInterviewQuestions,
+  fetchLearningTargets,
   removeBookmarkLabelAssignmentsByLabel,
   removeBookmarkLabelAssignment,
+  updateBookmarkLabel,
   updateInterviewQuestion,
   updateInterviewQuestionsByCourse,
+  upsertLearningTarget,
 } from './supabaseApi.js';
 
 let course = { id: 'archelon-interview-course', title: 'Archelon Learning', modules: [] };
@@ -37,6 +40,8 @@ let state = buildState(loadLearningState(), course);
 let allQuestionRows = [];
 let allBookmarkAssignments = [];
 let courseSummaries = [];
+let learningTargets = [];
+let targetsTableAvailable = true;
 let completingLessonId = null;
 let bookmarkLabels = [];
 let bookmarkPickerOpen = false;
@@ -46,6 +51,7 @@ let selectedLabelColor = '#00c9b1';
 let bookmarkLabelDraftName = '';
 let bookmarkLabelError = '';
 let savingBookmarkLabel = false;
+let editingBookmarkLabelId = null;
 let progressGlowTimer = null;
 let editingAnswerId = null;
 let answerDraft = '';
@@ -76,6 +82,16 @@ let lessonImportStatus = '';
 let editingCourseName = null;
 let courseNameDraft = '';
 let savingCourseName = false;
+let targetDraft = {
+  courseName: '',
+  dailyTarget: '',
+  weeklyTarget: '',
+  monthlyTarget: '',
+};
+let savingTarget = false;
+let targetStatusMessage = '';
+let targetCoursePickerOpen = false;
+let targetSavedPopupTimer = null;
 
 const labelColors = [
   '#00c9b1',
@@ -119,7 +135,18 @@ const elements = {
   overallProgressPercent: document.getElementById('overallProgressPercent'),
   overallProgressFill: document.getElementById('overallProgressFill'),
   overallProgressText: document.getElementById('overallProgressText'),
+  targetProgressMarkers: document.getElementById('targetProgressMarkers'),
+  setTargetsButton: document.getElementById('setTargetsButton'),
   breadcrumbRow: document.getElementById('breadcrumbRow'),
+  targetsPage: document.getElementById('targetsPage'),
+  targetsTableHint: document.getElementById('targetsTableHint'),
+  targetCoursePicker: document.getElementById('targetCoursePicker'),
+  dailyTargetInput: document.getElementById('dailyTargetInput'),
+  weeklyTargetInput: document.getElementById('weeklyTargetInput'),
+  monthlyTargetInput: document.getElementById('monthlyTargetInput'),
+  saveTargetsButton: document.getElementById('saveTargetsButton'),
+  backToLearningButton: document.getElementById('backToLearningButton'),
+  targetSummaryCard: document.getElementById('targetSummaryCard'),
   lessonCard: document.getElementById('lessonCard'),
   lessonEmptyState: document.getElementById('lessonEmptyState'),
   lessonQuestion: document.getElementById('lessonQuestion'),
@@ -161,6 +188,7 @@ const elements = {
   singleLessonModeButton: document.getElementById('singleLessonModeButton'),
   bulkLessonModeButton: document.getElementById('bulkLessonModeButton'),
   lessonImportForm: document.getElementById('lessonImportForm'),
+  targetSavedPopup: document.getElementById('targetSavedPopup'),
 };
 
 function persist() {
@@ -182,6 +210,197 @@ function getCourseSummaries(rows) {
     });
   });
   return [...summaries.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function toDateInputValue(date = new Date()) {
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 10);
+}
+
+function parseTargetNumber(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function normalizeTarget(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    daily_target: Number(row.daily_target) || 0,
+    weekly_target: Number(row.weekly_target) || 0,
+    monthly_target: Number(row.monthly_target) || 0,
+    baseline_completed: Number(row.baseline_completed) || 0,
+    start_date: row.start_date || toDateInputValue(),
+  };
+}
+
+function getTargetForCourse(courseName) {
+  return normalizeTarget(learningTargets.find((target) => target.course_name === courseName));
+}
+
+function getCourseStats(courseName) {
+  if (courseName === course.title) {
+    const lessons = flattenLessons(course);
+    const completed = lessons.filter((lesson) => state.lessonState[lesson.id]?.completed).length;
+    return {
+      total: lessons.length,
+      completed,
+      remaining: Math.max(0, lessons.length - completed),
+    };
+  }
+  const rows = buildCourseRows(courseName);
+  const total = rows.length;
+  const completed = rows.filter((row) => row.mark_as_complete).length;
+  return {
+    total,
+    completed,
+    remaining: Math.max(0, total - completed),
+  };
+}
+
+function pluralize(value, singular, plural = `${singular}s`) {
+  return `${value} ${value === 1 ? singular : plural}`;
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonths(date, months) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function formatTargetDate(date) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
+}
+
+function getDaysSinceStart(startDate) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.max(0, Math.floor((todayStart - start) / 86400000));
+}
+
+function getMonthsSinceStart(startDate) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const today = new Date();
+  return Math.max(0, (today.getFullYear() - start.getFullYear()) * 12 + today.getMonth() - start.getMonth());
+}
+
+function getTargetMarkerData(target, stats) {
+  if (!target || !stats.total) return [];
+  const daysSinceStart = getDaysSinceStart(target.start_date);
+  const monthsSinceStart = getMonthsSinceStart(target.start_date);
+  const definitions = [
+    {
+      key: 'daily',
+      label: 'Today',
+      targetCount: target.daily_target,
+      periodsElapsed: daysSinceStart + 1,
+    },
+    {
+      key: 'weekly',
+      label: 'This week',
+      targetCount: target.weekly_target,
+      periodsElapsed: Math.floor(daysSinceStart / 7) + 1,
+    },
+    {
+      key: 'monthly',
+      label: 'This month',
+      targetCount: target.monthly_target,
+      periodsElapsed: monthsSinceStart + 1,
+    },
+  ];
+
+  return definitions
+    .filter((item) => item.targetCount > 0)
+    .map((item) => {
+      const required = Math.min(stats.total, target.baseline_completed + item.targetCount * item.periodsElapsed);
+      return {
+        ...item,
+        required,
+        remaining: Math.max(0, required - stats.completed),
+        percent: stats.total ? Math.min(100, Math.max(0, (required / stats.total) * 100)) : 0,
+      };
+    });
+}
+
+function getTargetSummaryLines(courseName, target = getTargetForCourse(courseName)) {
+  const stats = getCourseStats(courseName);
+  if (!target) {
+    return {
+      stats,
+      tone: 'empty',
+      title: 'No target set yet.',
+      lines: ['Set a daily, weekly, or monthly pace to see finish estimates.'],
+      markers: [],
+    };
+  }
+
+  const start = new Date(`${target.start_date}T00:00:00`);
+  const lines = [];
+  const estimates = [];
+  if (target.daily_target > 0) {
+    const days = Math.ceil(stats.remaining / target.daily_target);
+    estimates.push({ label: 'daily', periods: days, date: addDays(new Date(), Math.max(0, days - 1)) });
+    lines.push(`At ${pluralize(target.daily_target, 'lesson')}/day, you can finish in about ${pluralize(days, 'day')}.`);
+  }
+  if (target.weekly_target > 0) {
+    const weeks = Math.ceil(stats.remaining / target.weekly_target);
+    estimates.push({ label: 'weekly', periods: weeks, date: addDays(new Date(), Math.max(0, weeks * 7 - 1)) });
+    lines.push(`At ${pluralize(target.weekly_target, 'lesson')}/week, you can finish in about ${pluralize(weeks, 'week')}.`);
+  }
+  if (target.monthly_target > 0) {
+    const months = Math.ceil(stats.remaining / target.monthly_target);
+    estimates.push({ label: 'monthly', periods: months, date: addMonths(new Date(), Math.max(0, months - 1)) });
+    lines.push(`At ${pluralize(target.monthly_target, 'lesson')}/month, you can finish in about ${pluralize(months, 'month')}.`);
+  }
+
+  const fastest = estimates.sort((left, right) => left.date - right.date)[0];
+  const markers = getTargetMarkerData(target, stats);
+  const nextMarker = markers.find((marker) => marker.remaining > 0);
+  if (nextMarker) {
+    lines.push(`${nextMarker.label} target: ${nextMarker.required} / ${stats.total}. ${pluralize(nextMarker.remaining, 'lesson')} to go.`);
+  } else if (markers.length) {
+    lines.push('Current target is already locked in. Look at the next marker.');
+  }
+
+  let tone = 'steady';
+  if (target.daily_target >= 20 || target.weekly_target >= 100 || target.monthly_target >= 300) tone = 'intense';
+  if (target.daily_target > 0 && target.daily_target <= 2 && stats.remaining > 20) tone = 'slow';
+
+  const title = stats.remaining === 0
+    ? 'Course complete.'
+    : fastest
+      ? `Estimated finish: ${formatTargetDate(fastest.date)}`
+      : 'Target saved.';
+
+  const toneLine = tone === 'intense'
+    ? 'This is an aggressive pace. Good for a sprint, but watch sustainability.'
+    : tone === 'slow'
+      ? 'This is a gentle pace. Increase it if you want faster momentum.'
+      : 'This pace looks sustainable.';
+
+  return {
+    stats,
+    tone,
+    title,
+    lines: [
+      `${courseName} has ${pluralize(stats.total, 'lesson')}. You have completed ${stats.completed}; ${stats.remaining} remaining.`,
+      ...lines,
+      toneLine,
+      `Target started on ${formatTargetDate(start)} from a baseline of ${target.baseline_completed} completed.`,
+    ],
+    markers,
+  };
 }
 
 function resetMarkdownEditors() {
@@ -209,6 +428,7 @@ function setActiveCourse(courseName, options = {}) {
     selectedLessonId: options.keepSelectedLesson ? state.selectedLessonId : null,
   }, course);
   state.selectedCourseName = nextCourseName || course.title;
+  state.currentView = options.keepView ? state.currentView : 'learning';
   state.searchQuery = options.keepSearch ? state.searchQuery : '';
   bookmarkPickerOpen = false;
   bookmarkFilterOpen = false;
@@ -539,6 +759,7 @@ function mergeUpdatedLessonRow(lessonId, patch, updated) {
 }
 
 function setSelectedLesson(lessonId) {
+  state.currentView = 'learning';
   state.selectedLessonId = lessonId;
   bookmarkPickerOpen = false;
   addingBookmarkLabel = false;
@@ -547,15 +768,234 @@ function setSelectedLesson(lessonId) {
   render();
 }
 
+function openTargetsPage(courseName = state.selectedCourseName || course.title) {
+  state.currentView = 'targets';
+  state.selectedTargetCourseName = courseName;
+  targetStatusMessage = '';
+  const target = getTargetForCourse(courseName);
+  targetDraft = {
+    courseName,
+    dailyTarget: target?.daily_target ? String(target.daily_target) : '',
+    weeklyTarget: target?.weekly_target ? String(target.weekly_target) : '',
+    monthlyTarget: target?.monthly_target ? String(target.monthly_target) : '',
+  };
+  persist();
+  render();
+}
+
+function openLearningPage() {
+  state.currentView = 'learning';
+  targetStatusMessage = '';
+  persist();
+  render();
+}
+
+function showTargetSavedPopup() {
+  window.clearTimeout(targetSavedPopupTimer);
+  elements.targetSavedPopup.classList.remove('hidden');
+  elements.targetSavedPopup.classList.remove('is-visible');
+  void elements.targetSavedPopup.offsetWidth;
+  elements.targetSavedPopup.classList.add('is-visible');
+  targetSavedPopupTimer = window.setTimeout(() => {
+    elements.targetSavedPopup.classList.remove('is-visible');
+    targetSavedPopupTimer = window.setTimeout(() => {
+      elements.targetSavedPopup.classList.add('hidden');
+    }, 220);
+  }, 1600);
+}
+
+function updateTargetDraftFromInputs() {
+  targetDraft = {
+    courseName: targetDraft.courseName || state.selectedTargetCourseName || state.selectedCourseName || course.title,
+    dailyTarget: elements.dailyTargetInput.value,
+    weeklyTarget: elements.weeklyTargetInput.value,
+    monthlyTarget: elements.monthlyTargetInput.value,
+  };
+}
+
+async function saveTargetSettings() {
+  updateTargetDraftFromInputs();
+  const courseName = targetDraft.courseName;
+  const stats = getCourseStats(courseName);
+  const target = {
+    course_name: courseName,
+    daily_target: parseTargetNumber(targetDraft.dailyTarget),
+    weekly_target: parseTargetNumber(targetDraft.weeklyTarget),
+    monthly_target: parseTargetNumber(targetDraft.monthlyTarget),
+    start_date: toDateInputValue(),
+    baseline_completed: stats.completed,
+  };
+
+  if (!target.daily_target && !target.weekly_target && !target.monthly_target) {
+    targetStatusMessage = 'Set at least one daily, weekly, or monthly target.';
+    renderTargetsPage();
+    return;
+  }
+
+  savingTarget = true;
+  targetStatusMessage = '';
+  renderTargetsPage();
+  try {
+    const saved = await upsertLearningTarget(target);
+    const nextTarget = normalizeTarget(saved);
+    learningTargets = [
+      ...learningTargets.filter((item) => item.course_name !== courseName),
+      nextTarget,
+    ].sort((left, right) => left.course_name.localeCompare(right.course_name));
+    targetsTableAvailable = true;
+    targetStatusMessage = '';
+    savingTarget = false;
+    showTargetSavedPopup();
+    render();
+  } catch (error) {
+    console.error(error);
+    savingTarget = false;
+    targetsTableAvailable = false;
+    targetStatusMessage = error.message || 'Could not save target in Supabase.';
+    render();
+  }
+}
+
+function renderTargetsPage() {
+  const selectedCourse = state.selectedTargetCourseName
+    || state.selectedCourseName
+    || courseSummaries[0]?.name
+    || course.title;
+  const target = getTargetForCourse(selectedCourse);
+  if (!targetDraft.courseName || targetDraft.courseName !== selectedCourse) {
+    targetDraft = {
+      courseName: selectedCourse,
+      dailyTarget: target?.daily_target ? String(target.daily_target) : '',
+      weeklyTarget: target?.weekly_target ? String(target.weekly_target) : '',
+      monthlyTarget: target?.monthly_target ? String(target.monthly_target) : '',
+    };
+  }
+
+  const activeCourseSummary = courseSummaries.find((summary) => summary.name === selectedCourse)
+    || courseSummaries[0]
+    || { name: selectedCourse, totalLessons: 0 };
+  elements.targetCoursePicker.innerHTML = `
+    <div class="bookmark-label-select target-course-select ${targetCoursePickerOpen ? 'is-open' : ''}">
+      <button
+        id="targetCoursePickerButton"
+        class="bookmark-label-select-button target-course-select-button"
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded="${targetCoursePickerOpen}"
+      >
+        <span class="bookmark-filter-value">
+          <i></i>
+          <strong>${escapeHtml(activeCourseSummary.name)}</strong>
+        </span>
+        <em>${activeCourseSummary.totalLessons}</em>
+      </button>
+      <div class="bookmark-filter-menu target-course-menu ${targetCoursePickerOpen ? '' : 'hidden'}" role="listbox">
+        ${courseSummaries.map((summary) => `
+          <button
+            class="bookmark-filter-option target-course-option ${summary.name === selectedCourse ? 'is-selected' : ''}"
+            data-target-course-name="${escapeHtml(summary.name)}"
+            type="button"
+            role="option"
+            aria-selected="${summary.name === selectedCourse}"
+          >
+            <span class="bookmark-filter-value">
+              <i></i>
+              <strong>${escapeHtml(summary.name)}</strong>
+            </span>
+            <em>${summary.totalLessons}</em>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+  elements.dailyTargetInput.value = targetDraft.dailyTarget;
+  elements.weeklyTargetInput.value = targetDraft.weeklyTarget;
+  elements.monthlyTargetInput.value = targetDraft.monthlyTarget;
+  elements.saveTargetsButton.disabled = savingTarget;
+  elements.saveTargetsButton.querySelector('span').textContent = savingTarget ? 'Saving...' : 'Save Targets';
+
+  elements.targetsTableHint.classList.toggle('hidden', !targetStatusMessage);
+  elements.targetsTableHint.textContent = targetStatusMessage;
+
+  const previewTarget = normalizeTarget({
+    course_name: selectedCourse,
+    daily_target: parseTargetNumber(targetDraft.dailyTarget),
+    weekly_target: parseTargetNumber(targetDraft.weeklyTarget),
+    monthly_target: parseTargetNumber(targetDraft.monthlyTarget),
+    start_date: target?.start_date || toDateInputValue(),
+    baseline_completed: target?.baseline_completed ?? getCourseStats(selectedCourse).completed,
+  });
+  const hasPreview = previewTarget.daily_target || previewTarget.weekly_target || previewTarget.monthly_target;
+  const summary = getTargetSummaryLines(selectedCourse, hasPreview ? previewTarget : target);
+  elements.targetSummaryCard.innerHTML = `
+    <p class="lesson-label">Goal intelligence</p>
+    <h2>${escapeHtml(summary.title)}</h2>
+    <div class="target-stat-row">
+      <span><strong>${summary.stats.completed}</strong> completed</span>
+      <span><strong>${summary.stats.remaining}</strong> remaining</span>
+      <span><strong>${summary.stats.total}</strong> total</span>
+    </div>
+    <div class="target-preview-track" aria-hidden="true">
+      <span class="target-preview-fill" style="width: ${summary.stats.total ? (summary.stats.completed / summary.stats.total) * 100 : 0}%"></span>
+      ${summary.markers.map((marker) => `
+        <i style="left: ${marker.percent}%" title="${escapeHtml(`${marker.label}: ${marker.required}`)}"></i>
+      `).join('')}
+    </div>
+    <ul class="target-summary-list">
+      ${summary.lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}
+    </ul>
+  `;
+
+  elements.targetCoursePicker.querySelector('#targetCoursePickerButton')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    targetCoursePickerOpen = !targetCoursePickerOpen;
+    renderTargetsPage();
+  });
+
+  elements.targetCoursePicker.querySelectorAll('[data-target-course-name]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const nextCourseName = button.dataset.targetCourseName;
+      state.selectedTargetCourseName = nextCourseName;
+      const nextTarget = getTargetForCourse(nextCourseName);
+      targetDraft = {
+        courseName: nextCourseName,
+        dailyTarget: nextTarget?.daily_target ? String(nextTarget.daily_target) : '',
+        weeklyTarget: nextTarget?.weekly_target ? String(nextTarget.weekly_target) : '',
+        monthlyTarget: nextTarget?.monthly_target ? String(nextTarget.monthly_target) : '',
+      };
+      targetStatusMessage = '';
+      targetCoursePickerOpen = false;
+      persist();
+      renderTargetsPage();
+    });
+  });
+}
+
 function renderTopMeta() {
   const totalLessons = flattenLessons(course).length;
   const completedCount = getCompletedCount(course, state);
   const progressPercent = getProgressPercent(course, state);
+  const target = getTargetForCourse(course.title);
+  const targetSummary = getTargetSummaryLines(course.title, target);
+  const nextMarker = targetSummary.markers.find((marker) => marker.remaining > 0);
   elements.moduleMetaLabel.textContent = `${totalLessons} lessons`;
   elements.topbarCourseName.textContent = course.title;
   elements.overallProgressPercent.textContent = `${progressPercent}%`;
   elements.overallProgressFill.style.width = `${progressPercent}%`;
-  elements.overallProgressText.textContent = `${completedCount} / ${totalLessons} lessons completed`;
+  elements.overallProgressText.textContent = nextMarker
+    ? `${completedCount} / ${totalLessons} completed · ${nextMarker.label}: ${nextMarker.required}/${totalLessons}`
+    : `${completedCount} / ${totalLessons} lessons completed`;
+  elements.targetProgressMarkers.innerHTML = targetSummary.markers.map((marker) => `
+    <span
+      class="target-progress-marker target-progress-marker-${marker.key}"
+      style="left: ${marker.percent}%"
+      title="${escapeHtml(`${marker.label}: ${marker.required}/${totalLessons}. ${marker.remaining ? `${marker.remaining} to go` : 'Target reached'}.`)}"
+    >
+      <i></i>
+      <b>${escapeHtml(`${marker.label}: ${marker.remaining ? `${marker.remaining} to go` : 'done'}`)}</b>
+    </span>
+  `).join('');
 }
 
 function glowTopProgress() {
@@ -1224,6 +1664,11 @@ async function toggleBookmarkLabel(lesson, labelId) {
 
 function removeLabelFromLocalState(labelId) {
   bookmarkLabels = bookmarkLabels.filter((label) => label.id !== labelId);
+  if (editingBookmarkLabelId === labelId) {
+    editingBookmarkLabelId = null;
+    bookmarkLabelDraftName = '';
+    bookmarkLabelError = '';
+  }
   Object.keys(state.lessonState).forEach((lessonId) => {
     const lessonState = state.lessonState[lessonId];
     const nextLabelIds = getBookmarkLabelIds(lessonState).filter((item) => item !== labelId);
@@ -1263,6 +1708,85 @@ async function deleteGlobalBookmarkLabel(labelId) {
     console.error(error);
     bookmarkLabelError = 'Could not delete label. Check table delete permissions.';
     renderBookmarkLabelPicker(getLessonById(course, state.selectedLessonId), state.lessonState[state.selectedLessonId]);
+  }
+}
+
+function startBookmarkLabelEdit(labelId) {
+  const label = getBookmarkLabel(labelId);
+  if (!label) return;
+  addingBookmarkLabel = false;
+  editingBookmarkLabelId = labelId;
+  bookmarkLabelDraftName = label.name || '';
+  selectedLabelColor = label.color || selectedLabelColor;
+  bookmarkLabelError = '';
+  renderBookmarkLabelPicker(getLessonById(course, state.selectedLessonId), state.lessonState[state.selectedLessonId]);
+  elements.bookmarkLabelPicker.querySelector('#newBookmarkLabelName')?.focus();
+}
+
+async function saveBookmarkLabelEdit(lesson, lessonState) {
+  const label = getBookmarkLabel(editingBookmarkLabelId);
+  if (!label) return;
+  const input = elements.bookmarkLabelPicker.querySelector('#newBookmarkLabelName');
+  const name = input?.value.trim();
+  bookmarkLabelDraftName = input?.value || '';
+  if (!name) {
+    bookmarkLabelError = 'Enter a label name.';
+    renderBookmarkLabelPicker(lesson, lessonState);
+    elements.bookmarkLabelPicker.querySelector('#newBookmarkLabelName')?.focus();
+    return;
+  }
+
+  const duplicate = bookmarkLabels.find((item) => (
+    item.id !== label.id && item.name.toLowerCase() === name.toLowerCase()
+  ));
+  if (duplicate) {
+    bookmarkLabelError = 'A label with this name already exists.';
+    renderBookmarkLabelPicker(lesson, lessonState);
+    elements.bookmarkLabelPicker.querySelector('#newBookmarkLabelName')?.focus();
+    return;
+  }
+
+  const patch = {
+    name,
+    color: selectedLabelColor,
+  };
+  const unchanged = patch.name === label.name && patch.color === (label.color || '#00c9b1');
+  if (unchanged) {
+    editingBookmarkLabelId = null;
+    bookmarkLabelDraftName = '';
+    bookmarkLabelError = '';
+    renderBookmarkLabelPicker(lesson, lessonState);
+    return;
+  }
+
+  const confirmed = await confirmMarkdownUpdate({
+    title: 'Update bookmark label',
+    text: `Rename "${label.name}" to "${name}" everywhere it is used?`,
+    actionLabel: 'Update Label',
+  });
+  if (!confirmed) return;
+
+  try {
+    savingBookmarkLabel = true;
+    bookmarkLabelError = '';
+    renderBookmarkLabelPicker(lesson, lessonState);
+    const updated = await updateBookmarkLabel(label.id, patch);
+    bookmarkLabels = bookmarkLabels.map((item) => (
+      item.id === label.id ? { ...item, ...patch, ...(updated || {}) } : item
+    )).sort((left, right) => {
+      const orderDiff = (Number(left.sort_order) || 0) - (Number(right.sort_order) || 0);
+      return orderDiff || String(left.name).localeCompare(String(right.name));
+    });
+    editingBookmarkLabelId = null;
+    bookmarkLabelDraftName = '';
+    savingBookmarkLabel = false;
+    render();
+  } catch (error) {
+    console.error(error);
+    savingBookmarkLabel = false;
+    bookmarkLabelError = 'Could not update label. Check table update permissions.';
+    renderBookmarkLabelPicker(lesson, lessonState);
+    elements.bookmarkLabelPicker.querySelector('#newBookmarkLabelName')?.focus();
   }
 }
 
@@ -1308,12 +1832,19 @@ function renderBookmarkLabelPicker(lesson, lessonState) {
             <span>${escapeHtml(label.name)}</span>
             <span class="label-check">${selectedLabelIds.includes(label.id) ? 'On' : ''}</span>
           </button>
+          <button class="bookmark-label-action" data-edit-label-id="${escapeHtml(label.id)}" type="button" aria-label="Edit ${escapeHtml(label.name)} label" title="Edit label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L8.582 18.07a4.5 4.5 0 0 1-1.897 1.13L3 20l.8-3.685a4.5 4.5 0 0 1 1.13-1.897L16.862 4.487Z" />
+            </svg>
+          </button>
           <button class="bookmark-label-delete" data-delete-label-id="${escapeHtml(label.id)}" type="button" aria-label="Delete ${escapeHtml(label.name)} label" title="Delete label">&times;</button>
         </div>
       `).join('')
     : '<p class="bookmark-label-empty">No labels yet.</p>';
 
-  const addLabelView = addingBookmarkLabel ? `
+  const editingLabel = editingBookmarkLabelId ? getBookmarkLabel(editingBookmarkLabelId) : null;
+  const isLabelFormOpen = addingBookmarkLabel || !!editingLabel;
+  const addLabelView = isLabelFormOpen ? `
     <div class="bookmark-label-form">
       <input id="newBookmarkLabelName" type="text" placeholder="Label name" maxlength="40" value="${escapeHtml(bookmarkLabelDraftName)}" />
       <div class="label-color-row">
@@ -1325,7 +1856,7 @@ function renderBookmarkLabelPicker(lesson, lessonState) {
       <div class="bookmark-label-form-actions">
         <button id="cancelBookmarkLabelButton" class="secondary-button compact-label-button" type="button">Cancel</button>
         <button id="saveBookmarkLabelButton" class="complete-button compact-label-button" type="button" ${savingBookmarkLabel ? 'disabled' : ''}>
-          <span>${savingBookmarkLabel ? 'Saving...' : 'Save'}</span>
+          <span>${savingBookmarkLabel ? 'Saving...' : editingLabel ? 'Update' : 'Save'}</span>
         </button>
       </div>
     </div>
@@ -1346,6 +1877,7 @@ function renderBookmarkLabelPicker(lesson, lessonState) {
   elements.bookmarkLabelPicker.querySelector('#showAddBookmarkLabelButton')?.addEventListener('click', (event) => {
     event.stopPropagation();
     addingBookmarkLabel = true;
+    editingBookmarkLabelId = null;
     bookmarkLabelDraftName = '';
     bookmarkLabelError = '';
     renderBookmarkLabelPicker(lesson, lessonState);
@@ -1354,6 +1886,13 @@ function renderBookmarkLabelPicker(lesson, lessonState) {
 
   elements.bookmarkLabelPicker.querySelectorAll('[data-label-id]').forEach((button) => {
     button.addEventListener('click', () => toggleBookmarkLabel(lesson, button.dataset.labelId));
+  });
+
+  elements.bookmarkLabelPicker.querySelectorAll('[data-edit-label-id]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      startBookmarkLabelEdit(button.dataset.editLabelId);
+    });
   });
 
   elements.bookmarkLabelPicker.querySelectorAll('[data-delete-label-id]').forEach((button) => {
@@ -1375,6 +1914,7 @@ function renderBookmarkLabelPicker(lesson, lessonState) {
 
   elements.bookmarkLabelPicker.querySelector('#cancelBookmarkLabelButton')?.addEventListener('click', () => {
     addingBookmarkLabel = false;
+    editingBookmarkLabelId = null;
     bookmarkLabelDraftName = '';
     bookmarkLabelError = '';
     renderBookmarkLabelPicker(lesson, lessonState);
@@ -1392,6 +1932,10 @@ function renderBookmarkLabelPicker(lesson, lessonState) {
   });
 
   elements.bookmarkLabelPicker.querySelector('#saveBookmarkLabelButton')?.addEventListener('click', async () => {
+    if (editingBookmarkLabelId) {
+      await saveBookmarkLabelEdit(lesson, lessonState);
+      return;
+    }
     const input = elements.bookmarkLabelPicker.querySelector('#newBookmarkLabelName');
     const name = input?.value.trim();
     bookmarkLabelDraftName = input?.value || '';
@@ -1435,6 +1979,7 @@ function renderBookmarkLabelPicker(lesson, lessonState) {
       bookmarkLabelDraftName = '';
       savingBookmarkLabel = false;
       addingBookmarkLabel = false;
+      editingBookmarkLabelId = null;
       renderBookmarkLabelPicker(lesson, state.lessonState[lesson.id]);
     } catch (error) {
       console.error(error);
@@ -1895,6 +2440,16 @@ function bindEvents() {
   });
 
   elements.addLessonsButton.addEventListener('click', openLessonImportDialog);
+  elements.setTargetsButton.addEventListener('click', () => openTargetsPage(state.selectedCourseName || course.title));
+  elements.backToLearningButton.addEventListener('click', openLearningPage);
+  [elements.dailyTargetInput, elements.weeklyTargetInput, elements.monthlyTargetInput].forEach((input) => {
+    input.addEventListener('input', () => {
+      updateTargetDraftFromInputs();
+      targetStatusMessage = '';
+      renderTargetsPage();
+    });
+  });
+  elements.saveTargetsButton.addEventListener('click', saveTargetSettings);
   elements.closeLessonImportButton.addEventListener('click', closeLessonImportDialog);
   elements.singleLessonModeButton.addEventListener('click', () => setLessonImportMode('single'));
   elements.bulkLessonModeButton.addEventListener('click', () => setLessonImportMode('bulk'));
@@ -1983,6 +2538,10 @@ function bindEvents() {
   });
 
   document.addEventListener('click', (event) => {
+    if (targetCoursePickerOpen && !event.target.closest('.target-course-picker')) {
+      targetCoursePickerOpen = false;
+      renderTargetsPage();
+    }
     if (bookmarkFilterOpen && !event.target.closest('.bookmark-label-filters')) {
       bookmarkFilterOpen = false;
       renderBookmarksPanel();
@@ -1998,7 +2557,16 @@ function render() {
   renderTopMeta();
   renderSidebarNav();
   renderModuleList();
-  renderLessonCard();
+  const isTargetsView = state.currentView === 'targets';
+  elements.targetsPage.classList.toggle('hidden', !isTargetsView);
+  elements.breadcrumbRow.classList.toggle('hidden', isTargetsView);
+  elements.lessonCard.classList.toggle('hidden', isTargetsView);
+  elements.lessonEmptyState.classList.toggle('hidden', isTargetsView || !!getLessonById(course, state.selectedLessonId));
+  if (isTargetsView) {
+    renderTargetsPage();
+  } else {
+    renderLessonCard();
+  }
   renderSidePanel();
   renderLessonImportDialog();
 }
@@ -2013,10 +2581,19 @@ async function init() {
       fetchBookmarkLabels(),
       fetchBookmarkLabelAssignments(),
     ]);
+    let targets = [];
+    try {
+      targets = await fetchLearningTargets();
+    } catch (error) {
+      console.warn('Targets could not be loaded. Continuing without persisted targets.', error);
+      targetsTableAvailable = false;
+    }
     allQuestionRows = rows;
     allBookmarkAssignments = assignments;
     courseSummaries = getCourseSummaries(rows);
     bookmarkLabels = labels;
+    targetsTableAvailable = targetsTableAvailable && targets.length >= 0;
+    learningTargets = targets.map(normalizeTarget).filter(Boolean);
     const savedState = loadLearningState();
     const savedCourseName = courseSummaries.some((summary) => summary.name === savedState.selectedCourseName)
       ? savedState.selectedCourseName

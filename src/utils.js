@@ -17,6 +17,8 @@ export function saveLearningState(state) {
     leftPanelCollapsed: state.leftPanelCollapsed,
     rightPanelCollapsed: state.rightPanelCollapsed,
     bookmarkLabelFilterId: state.bookmarkLabelFilterId,
+    currentView: state.currentView,
+    selectedTargetCourseName: state.selectedTargetCourseName,
   }));
 }
 
@@ -142,6 +144,8 @@ export function buildState(rawState, course) {
     noteDraft: '',
     editingNoteId: null,
     bookmarkLabelFilterId: rawState.bookmarkLabelFilterId || 'all',
+    currentView: rawState.currentView || 'learning',
+    selectedTargetCourseName: rawState.selectedTargetCourseName || rawState.selectedCourseName || course.title,
   };
 }
 

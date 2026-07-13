@@ -30,9 +30,11 @@
           <span id="overallProgressPercent">0%</span>
           <div class="progress-track topbar-progress-track" aria-hidden="true">
             <div id="overallProgressFill" class="progress-fill"></div>
+            <div id="targetProgressMarkers" class="target-progress-markers"></div>
           </div>
           <span id="overallProgressText" class="topbar-progress-text">0 / 0 completed</span>
         </div>
+        <button id="setTargetsButton" class="target-topbar-button" type="button">Set Targets</button>
         <label class="search-shell">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
             <circle cx="11" cy="11" r="6.5" />
@@ -98,6 +100,51 @@
 
       <main class="lesson-column">
         <div class="breadcrumb-row" id="breadcrumbRow"></div>
+
+        <section id="targetsPage" class="targets-page hidden">
+          <div class="targets-page-head">
+            <div>
+              <p class="lesson-label">Targets</p>
+              <h1>Set Course Targets</h1>
+              <p>Choose a course pace and Archelon will calculate finish time, today's checkpoint, and the next target marker.</p>
+            </div>
+            <button id="backToLearningButton" class="secondary-button target-back-button" type="button">Back to Learning</button>
+          </div>
+
+          <div id="targetsTableHint" class="target-table-hint hidden"></div>
+
+          <div class="targets-grid">
+            <section class="target-settings-card">
+              <div class="lesson-import-field">
+                <span>Course</span>
+                <div id="targetCoursePicker" class="target-course-picker"></div>
+              </div>
+
+              <div class="target-input-grid">
+                <label class="lesson-import-field">
+                  <span>Daily target</span>
+                  <input id="dailyTargetInput" type="number" min="0" step="1" placeholder="20" />
+                </label>
+                <label class="lesson-import-field">
+                  <span>Weekly target</span>
+                  <input id="weeklyTargetInput" type="number" min="0" step="1" placeholder="50" />
+                </label>
+                <label class="lesson-import-field">
+                  <span>Monthly target</span>
+                  <input id="monthlyTargetInput" type="number" min="0" step="1" placeholder="120" />
+                </label>
+              </div>
+
+              <div class="target-actions">
+                <button id="saveTargetsButton" class="complete-button" type="button">
+                  <span>Save Targets</span>
+                </button>
+              </div>
+            </section>
+
+            <section id="targetSummaryCard" class="target-summary-card"></section>
+          </div>
+        </section>
 
         <article id="lessonCard" class="lesson-card hidden">
           <div class="lesson-card-top">
@@ -287,6 +334,11 @@
 
       <div id="lessonImportForm" class="lesson-import-form"></div>
     </section>
+  </div>
+
+  <div id="targetSavedPopup" class="target-saved-popup hidden" role="status" aria-live="polite">
+    <span aria-hidden="true">✓</span>
+    <strong>Target Saved</strong>
   </div>
 
   <script type="module" src="/src/main.js"></script>
